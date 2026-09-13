@@ -980,7 +980,7 @@ function setSupersetType(type){
   if(repsFieldReps) repsFieldReps.style.display = supersetActiveType === 'time' ? 'none' : '';
   if(repsFieldTime) repsFieldTime.style.display = supersetActiveType === 'time' ? '' : 'none';
 }
-async function addSupersetExercise(name, forcedType){
+async function addSupersetExercise(name, forcedType, group){
   name = (name || '').trim();
   if(!name) return;
   if(forcedType){ setSupersetType(forcedType); }
@@ -990,9 +990,11 @@ async function addSupersetExercise(name, forcedType){
     : (parseFloat(document.getElementById('supersetReps')?.value) || 10);
   const weight = parseFloat(document.getElementById('supersetWeight')?.value) || 0;
   const restSeconds = parseInt(document.getElementById('supersetRest')?.value) || 90;
+  const catalogMatch = EXERCISE_CATALOG.find(e => normalizeStr(e.name) === normalizeStr(name));
+  const photoGroup = group || (catalogMatch ? catalogMatch.group : '');
   getActiveRoutine().exercises.push({
     id: uid(), name, type: supersetActiveType, warmup:false, sets, reps, weight, restSeconds,
-    supersetGroup: supersetActiveLabel, photo:'', video:''
+    supersetGroup: supersetActiveLabel, photo: photoGroup ? groupPlaceholderDataUrl(photoGroup) : '', video:''
   });
   await saveStudent(state.currentId, state.currentData);
   showToast(name + ' agregado a la superserie ' + supersetActiveLabel);
@@ -1019,7 +1021,7 @@ function handleSupersetCatalogSearch(ev){
   const matches = EXERCISE_CATALOG.filter(e => normalizeStr(e.name).includes(q)).slice(0, 20);
   if(!matches.length){ box.innerHTML = '<div style="font-family:var(--font-mono); font-size:11px; color:var(--text-dim); padding:4px 0;">Sin resultados — agrégalo escribiendo el nombre abajo.</div>'; return; }
   box.innerHTML = matches.map(e =>
-    `<button type="button" class="chip" onclick="addSupersetExercise('${e.name.replace(/'/g,"\\'")}', '${e.type === 'time' ? 'time' : 'reps'}')">+ ${escapeHtml(e.name)}</button>`
+    `<button type="button" class="chip" onclick="addSupersetExercise('${e.name.replace(/'/g,"\\'")}', '${e.type === 'time' ? 'time' : 'reps'}', '${e.group.replace(/'/g,"\\'")}')">+ ${escapeHtml(e.name)}</button>`
   ).join('');
 }
 function nextSupersetLabel(routine){
@@ -1347,34 +1349,60 @@ function setWarmupFlag(isWarmup){
 
 /* ---------- Rest timer ---------- */
 let timerInterval = null;
-let timerState = { remaining:0, total:0, running:false, label:'' };
+let timerState = { remaining:0, total:0, running:false, label:'', endTime:0 };
 const RING_CIRCUMFERENCE = 163.36;
+
+function requestNotifPermission(){
+  try{
+    if('Notification' in window && Notification.permission === 'default'){
+      Notification.requestPermission();
+    }
+  }catch(e){}
+}
 
 function startRestTimer(seconds, label){
   seconds = Math.max(5, seconds || 90);
   clearInterval(timerInterval);
-  timerState = { remaining: seconds, total: seconds, running: true, label: label || 'Descanso' };
+  timerState = { remaining: seconds, total: seconds, running: true, label: label || 'Descanso', endTime: Date.now() + seconds*1000 };
   const bar = document.getElementById('restTimerBar');
   if(bar) bar.classList.add('show');
   updateTimerBarUI();
-  timerInterval = setInterval(tickTimer, 1000);
+  timerInterval = setInterval(tickTimer, 250);
+  requestNotifPermission();
 }
 function tickTimer(){
   if(!timerState.running) return;
-  timerState.remaining -= 1;
-  if(timerState.remaining <= 0){
-    timerState.remaining = 0;
+  const remaining = Math.max(0, Math.round((timerState.endTime - Date.now())/1000));
+  timerState.remaining = remaining;
+  if(remaining <= 0){
     updateTimerBarUI();
     clearInterval(timerInterval);
     timerState.running = false;
-    beep();
-    if(navigator.vibrate) navigator.vibrate([200,150,200,150,200]);
-    showToast('¡Descanso terminado!');
-    setTimeout(closeTimer, 2500);
+    onRestTimerFinished();
     return;
   }
   updateTimerBarUI();
 }
+function onRestTimerFinished(){
+  beep();
+  if(navigator.vibrate) navigator.vibrate([300,150,300,150,300,150,500]);
+  showToast('¡Descanso terminado!');
+  try{
+    if('Notification' in window && Notification.permission === 'granted'){
+      new Notification('MITFIT · Descanso terminado', {
+        body: timerState.label ? ('Volvé a: ' + timerState.label) : 'Es hora de continuar',
+        tag: 'mitfit-rest'
+      });
+    }
+  }catch(e){}
+  setTimeout(closeTimer, 2500);
+}
+// Si la app estuvo en segundo plano y el descanso ya terminó, lo detecta apenas volvés
+document.addEventListener('visibilitychange', () => {
+  if(!document.hidden && timerState.running){
+    tickTimer();
+  }
+});
 function updateTimerBarUI(){
   const mm = String(Math.floor(timerState.remaining/60)).padStart(2,'0');
   const ss = String(timerState.remaining%60).padStart(2,'0');
@@ -1387,25 +1415,30 @@ function updateTimerBarUI(){
 }
 function toggleTimerPause(){
   timerState.running = !timerState.running;
-  if(timerState.running){ timerInterval = setInterval(tickTimer, 1000); }
-  else{ clearInterval(timerInterval); }
+  if(timerState.running){
+    timerState.endTime = Date.now() + timerState.remaining*1000;
+    timerInterval = setInterval(tickTimer, 250);
+  }else{
+    clearInterval(timerInterval);
+  }
   updateTimerBarUI();
 }
 function adjustTimer(delta){
   timerState.remaining = Math.max(0, timerState.remaining + delta);
   if(timerState.remaining > timerState.total) timerState.total = timerState.remaining;
+  timerState.endTime = Date.now() + timerState.remaining*1000;
   updateTimerBarUI();
 }
 function closeTimer(){
   clearInterval(timerInterval);
-  timerState = { remaining:0, total:0, running:false, label:'' };
+  timerState = { remaining:0, total:0, running:false, label:'', endTime:0 };
   const bar = document.getElementById('restTimerBar');
   if(bar) bar.classList.remove('show');
 }
 function beep(){
   try{
     const ctx = new (window.AudioContext || window.webkitAudioContext)();
-    const playTone = (startAt, freq) => {
+    const playTone = (startAt, freq, dur) => {
       const o = ctx.createOscillator();
       const g = ctx.createGain();
       o.connect(g); g.connect(ctx.destination);
@@ -1413,13 +1446,15 @@ function beep(){
       o.frequency.value = freq;
       g.gain.value = 0.001;
       o.start(startAt);
-      g.gain.exponentialRampToValueAtTime(0.28, startAt + 0.02);
-      g.gain.exponentialRampToValueAtTime(0.001, startAt + 0.22);
-      o.stop(startAt + 0.25);
+      g.gain.exponentialRampToValueAtTime(0.45, startAt + 0.02);
+      g.gain.exponentialRampToValueAtTime(0.001, startAt + dur);
+      o.stop(startAt + dur + 0.05);
     };
     const now = ctx.currentTime;
-    [0, 0.35, 0.70].forEach(offset => playTone(now + offset, 880));
-    setTimeout(()=> ctx.close(), 1200);
+    // Dos rondas de 3 tonos: más fuerte y casi 3x más largo que antes
+    const pattern = [0, 0.3, 0.6, 1.3, 1.6, 1.9];
+    pattern.forEach((offset, i) => playTone(now + offset, (i % 3 === 2) ? 660 : 880, 0.25));
+    setTimeout(()=> ctx.close(), 2800);
   }catch(e){}
 }
 

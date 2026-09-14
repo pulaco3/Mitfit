@@ -337,6 +337,27 @@
     text-transform:uppercase; cursor:pointer;
   }
   .confetti-piece{ position:absolute; top:-10px; width:8px; height:8px; border-radius:2px; animation:confettiFall linear forwards; pointer-events:none; }
+
+  /* Tabata overlay */
+  .tabata-overlay{
+    position:fixed; inset:0; background:rgba(6,8,6,0.96); display:none; flex-direction:column;
+    align-items:center; justify-content:center; z-index:90; padding:24px; text-align:center;
+  }
+  .tabata-overlay.show{ display:flex; }
+  .tabata-close{ position:absolute; top:18px; right:18px; background:none; border:none; color:var(--text-dim); font-size:24px; cursor:pointer; padding:6px; }
+  .tabata-phase{ font-family:var(--font-mono); font-size:14px; letter-spacing:0.18em; text-transform:uppercase; margin-bottom:10px; }
+  .tabata-phase.work{ color:var(--accent); }
+  .tabata-phase.rest{ color:var(--yellow); }
+  .tabata-phase.prep{ color:var(--text-dim); }
+  .tabata-phase.done{ color:var(--green); }
+  .tabata-time{ font-family:var(--font-display); font-size:84px; font-weight:700; line-height:1; margin-bottom:14px; color:var(--text); }
+  .tabata-exname{ font-family:var(--font-body); font-size:21px; font-weight:600; margin-bottom:8px; max-width:320px; color:var(--text); }
+  .tabata-round{ font-family:var(--font-mono); font-size:13px; color:var(--text-dim); margin-bottom:32px; }
+  .tabata-controls{ display:flex; gap:12px; }
+  .tabata-controls button{
+    background:var(--surface-2); border:1px solid var(--line); color:var(--text); border-radius:10px;
+    padding:13px 20px; font-family:var(--font-mono); font-size:13px; cursor:pointer;
+  }
 </style>
 </head>
 <body>
@@ -951,6 +972,99 @@ function openEditExerciseForm(exId){
 }
 function closeExerciseForm(){ state.formOpen = null; render(); }
 
+/* ---------- Trainer: Tabata block builder ---------- */
+let tabataDraftCircuit = [''];
+function syncTabataDraftFromDom(){
+  const inputs = document.querySelectorAll('.tabata-circuit-input');
+  if(inputs.length) tabataDraftCircuit = Array.from(inputs).map(i => i.value);
+}
+function openAddTabataForm(){
+  tabataDraftCircuit = [''];
+  state.formOpen = 'addTabata';
+  render();
+  setTimeout(()=> document.getElementById('tabataName')?.focus(), 50);
+}
+function openEditTabataForm(exId){
+  const ex = activeExercises().find(e => e.id === exId);
+  tabataDraftCircuit = (ex && ex.tabataCircuit && ex.tabataCircuit.length) ? [...ex.tabataCircuit] : [''];
+  state.formOpen = 'editTabata:' + exId;
+  render();
+}
+function addTabataCircuitRow(){
+  syncTabataDraftFromDom();
+  tabataDraftCircuit.push('');
+  render();
+  setTimeout(()=>{
+    const inputs = document.querySelectorAll('.tabata-circuit-input');
+    inputs[inputs.length-1]?.focus();
+  }, 50);
+}
+function removeTabataCircuitRow(idx){
+  syncTabataDraftFromDom();
+  tabataDraftCircuit.splice(idx, 1);
+  if(!tabataDraftCircuit.length) tabataDraftCircuit = [''];
+  render();
+}
+function renderTabataFormHtml(editingEx){
+  const ex = editingEx || {name:'', tabataWork:20, tabataRest:10, tabataRounds:8, tabataPrep:10};
+  const circuitRows = tabataDraftCircuit.map((val, idx) => `
+    <div class="field-row" style="align-items:center; margin-bottom:8px;">
+      <input class="tabata-circuit-input" type="text" placeholder="Ej. Burpees" autocomplete="off" value="${escapeHtml(val)}" style="flex:1; background:var(--bg); border:1px solid var(--line); border-radius:8px; padding:9px 10px; color:var(--text); font-family:var(--font-body); font-size:13px;" />
+      <button type="button" class="icon-btn danger" onclick="removeTabataCircuitRow(${idx})">✕</button>
+    </div>
+  `).join('');
+  return `
+    <div class="inline-form" style="margin-top:10px;">
+      <div class="field">
+        <label>Nombre del bloque</label>
+        <input id="tabataName" type="text" placeholder="Ej. Tabata piernas" autocomplete="off" value="${escapeHtml(ex.name)}" />
+      </div>
+      <div class="field-row">
+        <div class="field"><label>Trabajo (seg)</label><input id="tabataWork" type="number" min="5" step="5" value="${ex.tabataWork||20}" /></div>
+        <div class="field"><label>Descanso (seg)</label><input id="tabataRest" type="number" min="0" step="5" value="${ex.tabataRest||10}" /></div>
+      </div>
+      <div class="field-row">
+        <div class="field"><label>Rondas</label><input id="tabataRounds" type="number" min="1" value="${ex.tabataRounds||8}" /></div>
+        <div class="field"><label>Preparación (seg)</label><input id="tabataPrep" type="number" min="0" step="5" value="${ex.tabataPrep||10}" /></div>
+      </div>
+      <div class="field">
+        <label>Circuito (los ejercicios se van alternando ronda a ronda; si dejás uno solo, se repite en todas)</label>
+        ${circuitRows}
+        <button type="button" class="btn btn-ghost btn-sm" onclick="addTabataCircuitRow()">+ Agregar ejercicio al circuito</button>
+      </div>
+      <div class="row-gap" style="margin-top:12px;">
+        <button type="button" class="btn btn-primary" style="flex:1;" onclick="submitTabataForm('${editingEx?editingEx.id:''}')">${editingEx?'Guardar cambios':'Agregar bloque'}</button>
+        <button type="button" class="btn btn-secondary" style="flex:1;" onclick="closeExerciseForm()">Cancelar</button>
+      </div>
+    </div>
+  `;
+}
+async function submitTabataForm(editingId){
+  syncTabataDraftFromDom();
+  const name = (document.getElementById('tabataName')?.value || '').trim() || 'Tabata';
+  const tabataWork = Math.max(5, parseInt(document.getElementById('tabataWork')?.value) || 20);
+  const tabataRest = Math.max(0, parseInt(document.getElementById('tabataRest')?.value) || 10);
+  const tabataRounds = Math.max(1, parseInt(document.getElementById('tabataRounds')?.value) || 8);
+  const tabataPrep = Math.max(0, parseInt(document.getElementById('tabataPrep')?.value) || 10);
+  const tabataCircuit = tabataDraftCircuit.map(v => v.trim()).filter(Boolean);
+  if(editingId){
+    const ex = activeExercises().find(e => e.id === editingId);
+    if(ex){
+      ex.name = name; ex.tabataWork = tabataWork; ex.tabataRest = tabataRest;
+      ex.tabataRounds = tabataRounds; ex.tabataPrep = tabataPrep; ex.tabataCircuit = tabataCircuit;
+    }
+  } else {
+    getActiveRoutine().exercises.push({
+      id: uid(), type:'tabata', warmup:false, name, tabataWork, tabataRest, tabataRounds, tabataPrep,
+      tabataCircuit, supersetGroup:'', photo:'', video:''
+    });
+  }
+  await saveStudent(state.currentId, state.currentData);
+  state.formOpen = null;
+  showToast('Bloque Tabata guardado');
+  render();
+}
+
 /* ---------- Trainer: quick superset builder ---------- */
 let supersetActiveLabel = null;
 let supersetActiveType = 'reps';
@@ -1484,6 +1598,173 @@ function mountTimerBar(){
   document.body.appendChild(bar);
 }
 mountTimerBar();
+
+/* ---------- Tabata timer ---------- */
+let tabataInterval = null;
+let tabataState = { active:false, blockId:null, circuit:[], work:20, rest:10, rounds:8, prep:10, phase:'prep', round:1, endTime:0, running:false, label:'' };
+
+function mountTabataOverlay(){
+  if(document.getElementById('tabataOverlay')) return;
+  const overlay = document.createElement('div');
+  overlay.id = 'tabataOverlay';
+  overlay.className = 'tabata-overlay';
+  overlay.innerHTML = `
+    <button class="tabata-close" onclick="confirmCloseTabata()">✕</button>
+    <div id="tabataPhase" class="tabata-phase prep">Preparate</div>
+    <div id="tabataTime" class="tabata-time">00:00</div>
+    <div id="tabataExName" class="tabata-exname">—</div>
+    <div id="tabataRound" class="tabata-round">Ronda 1</div>
+    <div class="tabata-controls">
+      <button id="tabataPauseBtn" onclick="toggleTabataPause()">⏸ Pausar</button>
+      <button onclick="skipTabataPhase()">⏭ Saltar</button>
+    </div>
+  `;
+  document.body.appendChild(overlay);
+}
+mountTabataOverlay();
+
+function currentTabataExerciseName(){
+  const c = tabataState.circuit.length ? tabataState.circuit : [tabataState.label];
+  return c[(tabataState.round - 1) % c.length];
+}
+function startTabataSession(exId){
+  const ex = activeExercises().find(e => e.id === exId);
+  if(!ex || ex.type !== 'tabata') return;
+  clearInterval(tabataInterval);
+  const circuit = (ex.tabataCircuit && ex.tabataCircuit.length) ? ex.tabataCircuit : [ex.name];
+  const prep = ex.tabataPrep || 10;
+  tabataState = {
+    active:true, blockId: ex.id, circuit,
+    work: ex.tabataWork || 20, rest: ex.tabataRest || 10, rounds: ex.tabataRounds || 8, prep,
+    phase:'prep', round:1, running:true, label: ex.name || 'Tabata',
+    endTime: Date.now() + prep*1000
+  };
+  const overlay = document.getElementById('tabataOverlay');
+  if(overlay) overlay.classList.add('show');
+  updateTabataUI();
+  tabataInterval = setInterval(tickTabata, 250);
+  requestNotifPermission();
+}
+function tickTabata(){
+  if(!tabataState.running) return;
+  const remaining = Math.max(0, Math.round((tabataState.endTime - Date.now())/1000));
+  if(remaining <= 0){
+    advanceTabataPhase();
+    return;
+  }
+  updateTabataUI(remaining);
+}
+function advanceTabataPhase(){
+  if(tabataState.phase === 'prep'){
+    tabataState.phase = 'work';
+    tabataState.endTime = Date.now() + tabataState.work*1000;
+    tabataBeep('work');
+  } else if(tabataState.phase === 'work'){
+    if(tabataState.round >= tabataState.rounds){
+      finishTabata();
+      return;
+    }
+    tabataState.phase = 'rest';
+    tabataState.endTime = Date.now() + tabataState.rest*1000;
+    tabataBeep('rest');
+  } else if(tabataState.phase === 'rest'){
+    tabataState.round += 1;
+    tabataState.phase = 'work';
+    tabataState.endTime = Date.now() + tabataState.work*1000;
+    tabataBeep('work');
+  }
+  updateTabataUI();
+}
+function finishTabata(){
+  tabataState.phase = 'done';
+  tabataState.running = false;
+  clearInterval(tabataInterval);
+  updateTabataUI(0);
+  beep();
+  if(navigator.vibrate) navigator.vibrate([300,150,300,150,300,150,500]);
+  try{
+    if('Notification' in window && Notification.permission === 'granted'){
+      new Notification('MITFIT · Tabata terminado', { body: '¡' + tabataState.label + ' completado!', tag:'mitfit-tabata' });
+    }
+  }catch(e){}
+  setTimeout(closeTabata, 3500);
+}
+function tabataBeep(kind){
+  try{
+    const ctx = new (window.AudioContext || window.webkitAudioContext)();
+    const playTone = (startAt, freq, dur) => {
+      const o = ctx.createOscillator();
+      const g = ctx.createGain();
+      o.connect(g); g.connect(ctx.destination);
+      o.type = 'square';
+      o.frequency.value = freq;
+      g.gain.value = 0.001;
+      o.start(startAt);
+      g.gain.exponentialRampToValueAtTime(0.4, startAt + 0.02);
+      g.gain.exponentialRampToValueAtTime(0.001, startAt + dur);
+      o.stop(startAt + dur + 0.05);
+    };
+    const now = ctx.currentTime;
+    if(kind === 'work'){
+      [0, 0.22].forEach(o => playTone(now+o, 1046, 0.18));
+    } else {
+      [0, 0.3].forEach(o => playTone(now+o, 523, 0.22));
+    }
+    setTimeout(()=> ctx.close(), 1400);
+  }catch(e){}
+  if(navigator.vibrate) navigator.vibrate(kind === 'work' ? [180] : [80,80,80]);
+}
+function updateTabataUI(remainingOverride){
+  const remaining = (remainingOverride !== undefined) ? remainingOverride : Math.max(0, Math.round((tabataState.endTime - Date.now())/1000));
+  const mm = String(Math.floor(remaining/60)).padStart(2,'0');
+  const ss = String(remaining%60).padStart(2,'0');
+  const timeEl = document.getElementById('tabataTime'); if(timeEl) timeEl.textContent = mm+':'+ss;
+  const phaseEl = document.getElementById('tabataPhase');
+  if(phaseEl){
+    phaseEl.className = 'tabata-phase ' + tabataState.phase;
+    phaseEl.textContent = tabataState.phase === 'prep' ? 'Preparate'
+      : tabataState.phase === 'work' ? 'Trabajo'
+      : tabataState.phase === 'rest' ? 'Descanso'
+      : '¡Listo!';
+  }
+  const exEl = document.getElementById('tabataExName');
+  if(exEl) exEl.textContent = tabataState.phase === 'done' ? tabataState.label : currentTabataExerciseName();
+  const roundEl = document.getElementById('tabataRound');
+  if(roundEl) roundEl.textContent = tabataState.phase === 'done' ? '¡Bloque completo!' : ('Ronda ' + tabataState.round + ' / ' + tabataState.rounds);
+  const pauseBtn = document.getElementById('tabataPauseBtn');
+  if(pauseBtn) pauseBtn.textContent = tabataState.running ? '⏸ Pausar' : '▶ Seguir';
+}
+function toggleTabataPause(){
+  if(tabataState.phase === 'done') return;
+  tabataState.running = !tabataState.running;
+  if(tabataState.running){
+    const remaining = Math.max(0, Math.round((tabataState.endTime - Date.now())/1000)) || 1;
+    tabataState.endTime = Date.now() + remaining*1000;
+    tabataInterval = setInterval(tickTabata, 250);
+  } else {
+    clearInterval(tabataInterval);
+  }
+  updateTabataUI();
+}
+function skipTabataPhase(){
+  if(tabataState.phase === 'done') return;
+  advanceTabataPhase();
+}
+function confirmCloseTabata(){
+  if(tabataState.phase === 'done'){ closeTabata(); return; }
+  showConfirmDialog('¿Salir del Tabata? Se va a perder el progreso de esta sesión.', closeTabata);
+}
+function closeTabata(){
+  clearInterval(tabataInterval);
+  tabataState = { active:false, blockId:null, circuit:[], work:20, rest:10, rounds:8, prep:10, phase:'prep', round:1, endTime:0, running:false, label:'' };
+  const overlay = document.getElementById('tabataOverlay');
+  if(overlay) overlay.classList.remove('show');
+}
+document.addEventListener('visibilitychange', () => {
+  if(!document.hidden && tabataState.active && tabataState.running){
+    tickTabata();
+  }
+});
 
 /* ---------- Session clock (cronómetro de rutina) ---------- */
 let workoutClockInterval = null;
@@ -2215,7 +2496,7 @@ function getTodayLogEntry(d, exId){
 function computeTodaySessionSummary(d, r){
   const today = todayISO();
   const log = (d.logs || []).find(l => l.date === today && l.routineId === r.id);
-  const routine = (r.exercises || []).filter(e => !e.warmup);
+  const routine = (r.exercises || []).filter(e => !e.warmup && e.type !== 'tabata');
   if(!log) return { hasLog:false, doneCount:0, total:routine.length };
   let doneCount = 0;
   routine.forEach(ex => {
@@ -2254,6 +2535,28 @@ function trainerExRowHtml(ex, d){
   `;
 }
 
+function trainerTabataRowHtml(ex){
+  const circuitLabel = (ex.tabataCircuit && ex.tabataCircuit.length) ? ex.tabataCircuit.join(' → ') : ex.name;
+  return `
+    <div class="ex-row">
+      <div class="ex-head">
+        <div style="display:flex; gap:12px;">
+          <div class="ex-photo-placeholder">⏱️</div>
+          <div>
+            <h4>${escapeHtml(ex.name)}</h4>
+            <div class="meta">TABATA · ${ex.tabataRounds||8} rondas · ${ex.tabataWork||20}s trabajo / ${ex.tabataRest||10}s descanso</div>
+            <div class="meta" style="margin-top:2px;">${escapeHtml(circuitLabel)}</div>
+          </div>
+        </div>
+        <div style="display:flex; gap:2px;">
+          <button class="icon-btn" onclick="openEditTabataForm('${ex.id}')">✎</button>
+          <button class="icon-btn danger" onclick="deleteExercise('${ex.id}')">✕</button>
+        </div>
+      </div>
+    </div>
+  `;
+}
+
 function renderRoutineEditor(d, r){
   const routine = r.exercises || [];
   const warmupList = routine.filter(e => e.warmup);
@@ -2270,7 +2573,8 @@ function renderRoutineEditor(d, r){
         </div>
       `;
     }
-    return trainerExRowHtml(block.items[0], d);
+    const item = block.items[0];
+    return item.type === 'tabata' ? trainerTabataRowHtml(item) : trainerExRowHtml(item, d);
   }).join('');
 
   const warmupRows = rowsFor(warmupList);
@@ -2293,6 +2597,12 @@ function renderRoutineEditor(d, r){
     formHtml = renderExerciseBrowserHtml();
   } else if(state.formOpen === 'addSuperset'){
     formHtml = renderSupersetFormHtml();
+  } else if(state.formOpen === 'addTabata'){
+    formHtml = renderTabataFormHtml(null);
+  } else if(state.formOpen && state.formOpen.startsWith('editTabata:')){
+    const exId = state.formOpen.split(':')[1];
+    const ex = routine.find(e => e.id === exId);
+    formHtml = renderTabataFormHtml(ex);
   } else if(state.formOpen && state.formOpen.startsWith('editExercise:')){
     const exId = state.formOpen.split(':')[1];
     const ex = routine.find(e => e.id === exId);
@@ -2329,6 +2639,7 @@ function renderRoutineEditor(d, r){
         <button class="btn btn-ghost" style="flex:1;" onclick="openExerciseBrowser()">+ Agregar ejercicio</button>
         <button class="btn btn-ghost" style="flex:1;" onclick="openAddSupersetForm()">+ Agregar superserie</button>
       </div>
+      <button class="btn btn-ghost" style="width:100%; margin-top:10px;" onclick="openAddTabataForm()">⏱️ + Agregar bloque Tabata</button>
     ` : ''}
   `;
 }
@@ -2621,6 +2932,25 @@ function studentExRowHtml(ex){
   `;
 }
 
+function studentTabataRowHtml(ex){
+  const circuitLabel = (ex.tabataCircuit && ex.tabataCircuit.length) ? ex.tabataCircuit.join(' → ') : ex.name;
+  return `
+    <div class="ex-row" style="margin-bottom:12px;">
+      <div class="ex-head">
+        <div style="display:flex; gap:12px;">
+          <div class="ex-photo-placeholder">⏱️</div>
+          <div>
+            <h4>${escapeHtml(ex.name)}</h4>
+            <div class="meta">TABATA · ${ex.tabataRounds||8} rondas · ${ex.tabataWork||20}s / ${ex.tabataRest||10}s</div>
+            <div class="meta" style="margin-top:2px;">${escapeHtml(circuitLabel)}</div>
+          </div>
+        </div>
+      </div>
+      <button class="btn btn-primary" style="margin-top:10px; width:100%;" onclick="startTabataSession('${ex.id}')">▶ Iniciar Tabata</button>
+    </div>
+  `;
+}
+
 function renderStudentRoutineTab(d){
   const exercises = activeExercises();
   if(!exercises.length){
@@ -2640,7 +2970,8 @@ function renderStudentRoutineTab(d){
         </div>
       `;
     }
-    return studentExRowHtml(block.items[0]);
+    const item = block.items[0];
+    return item.type === 'tabata' ? studentTabataRowHtml(item) : studentExRowHtml(item);
   }).join('');
 
   const warmupRows = rowsFor(warmupList);

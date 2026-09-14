@@ -197,6 +197,12 @@
     width:100%; background:var(--bg); border:1px solid var(--line); border-radius:8px;
     padding:11px 12px; color:var(--text); font-family:var(--font-body); font-size:14px;
   }
+  .field textarea{
+    width:100%; background:var(--bg); border:1px solid var(--line); border-radius:8px;
+    padding:11px 12px; color:var(--text); font-family:var(--font-body); font-size:14px;
+    resize:vertical; min-height:90px; line-height:1.4;
+  }
+  .field textarea:focus{ outline:none; border-color:var(--accent); }
   .field input:focus{ outline:none; border-color:var(--accent); }
   .field-row{ display:flex; gap:10px; }
   .field-row .field{ flex:1; }
@@ -820,11 +826,24 @@ async function saveStudent(id, data){
 async function deleteStudentStorage(id){
   try{ await db.collection('mitfit').doc('student-'+id).delete(); }catch(e){}
 }
+async function getAppSettings(){
+  try{
+    const doc = await withTimeout(db.collection('mitfit').doc('app-settings').get());
+    return (doc.exists && doc.data().value) ? doc.data().value : {};
+  }catch(e){ return {}; }
+}
+async function saveAppSettings(settings){
+  try{
+    await withTimeout(db.collection('mitfit').doc('app-settings').set({ value: settings }));
+    return true;
+  }catch(e){ return false; }
+}
 
 /* ---------- State ---------- */
 let state = {
   view: 'home',
   studentsIndex: [],
+  trainerPin: '',
   currentId: null,
   currentData: null,
   currentRoutineId: null,
@@ -858,6 +877,8 @@ function allExercisesFlat(d){
 /* ---------- Init ---------- */
 (async function init(){
   state.studentsIndex = await getIndex();
+  const settings = await getAppSettings();
+  state.trainerPin = settings.trainerPin || '';
   state.loading = false;
   render();
 })();
@@ -869,6 +890,52 @@ function goHome(){
 }
 function goTrainerDashboard(){
   state.view = 'trainerDashboard'; state.formOpen = null;
+  render();
+}
+function requestTrainerAccess(){
+  if(!state.trainerPin){ goTrainerDashboard(); return; }
+  state.view = 'trainerPinEntry';
+  render();
+}
+function cancelTrainerPinEntry(){
+  state.view = 'home';
+  render();
+}
+function submitTrainerPinEntry(ev){
+  ev.preventDefault();
+  const input = document.getElementById('trainerPinInput');
+  const val = input ? input.value.trim() : '';
+  if(val && val === state.trainerPin){
+    goTrainerDashboard();
+  } else {
+    showToast('PIN incorrecto');
+    if(input){ input.value = ''; input.focus(); }
+  }
+}
+function renderTrainerPinEntry(){
+  app.innerHTML = `
+    ${topbar(true, 'Inicio', 'cancelTrainerPinEntry()')}
+    <div class="content">
+      <div style="text-align:center; margin-top:20px;">
+        <img class="hero-logo" src="${LOGO_ICON}" alt="MITFIT" style="width:64px; height:64px; margin:0 auto 14px;" />
+        <h2 style="font-size:20px; margin-bottom:6px;">Acceso del entrenador</h2>
+        <p style="color:var(--text-dim); font-size:13px; margin-bottom:20px;">Ingresá el PIN de 4 dígitos</p>
+      </div>
+      <div class="field">
+        <input id="trainerPinInput" type="password" inputmode="numeric" maxlength="4" pattern="[0-9]*" placeholder="••••" autocomplete="off" style="width:100%; text-align:center; letter-spacing:0.5em; font-size:24px; background:var(--bg); border:1px solid var(--line); border-radius:8px; padding:16px 12px; color:var(--text); font-family:var(--font-mono);" />
+      </div>
+      <button class="btn btn-primary" style="margin-top:14px;" onclick="submitTrainerPinEntry(event)">Ingresar</button>
+    </div>
+  `;
+  setTimeout(()=> document.getElementById('trainerPinInput')?.focus(), 50);
+}
+async function saveTrainerPin(ev){
+  const input = document.getElementById('trainerPinSetInput');
+  const val = input ? input.value.trim() : '';
+  if(val && !/^\d{4}$/.test(val)){ showToast('El PIN debe tener 4 dígitos'); return; }
+  state.trainerPin = val;
+  await saveAppSettings({ trainerPin: val });
+  showToast(val ? 'PIN del entrenador guardado' : 'PIN del entrenador quitado');
   render();
 }
 async function openEditStudent(id){
@@ -1163,14 +1230,16 @@ function groupPlaceholderDataUrl(group){
 
 /* ---------- Trainer: multi-select exercise browser ---------- */
 let exerciseBrowseSelection = new Map();
-function openExerciseBrowser(){
+function openExerciseBrowser(warmupDefault){
   state.formOpen = 'browseExercises';
   exerciseBrowseSelection = new Map();
+  exerciseBrowseWarmup = !!warmupDefault;
   render();
 }
 function closeExerciseBrowser(){
   state.formOpen = null;
   exerciseBrowseSelection = new Map();
+  exerciseBrowseWarmup = false;
   render();
 }
 function distinctCatalogGroups(){
@@ -1262,7 +1331,7 @@ async function submitExerciseBrowseSelection(){
   const restSeconds = parseInt(document.getElementById('browseRest')?.value) || 90;
   exerciseBrowseSelection.forEach((info, name) => {
     getActiveRoutine().exercises.push({
-      id: uid(), name, type: info.type === 'time' ? 'time' : 'reps', warmup:false,
+      id: uid(), name, type: info.type === 'time' ? 'time' : 'reps', warmup: exerciseBrowseWarmup,
       sets, reps: info.type === 'time' ? Math.max(1, Math.round(reps/2)) : reps, weight, restSeconds,
       supersetGroup:'', photo: groupPlaceholderDataUrl(info.group), video:''
     });
@@ -1968,6 +2037,7 @@ function closeCelebration(){
 function render(){
   if(state.loading){ app.innerHTML = '<div class="content"><p class="chart-empty">Cargando…</p></div>'; return; }
   if(state.view === 'home') return renderHome();
+  if(state.view === 'trainerPinEntry') return renderTrainerPinEntry();
   if(state.view === 'pickStudent') return renderPickStudent();
   if(state.view === 'trainerDashboard') return renderTrainerDashboard();
   if(state.view === 'trainerEditStudent') return renderTrainerEditStudent();
@@ -1993,7 +2063,7 @@ function renderHome(){
         <img class="hero-logo" src="${LOGO_HERO}" alt="MITFIT" />
         <p>Rutinas y progreso, en un solo lugar.</p>
       </div>
-      <div class="role-card" onclick="goTrainerDashboard()">
+      <div class="role-card" onclick="requestTrainerAccess()">
         <h3>Soy el entrenador</h3>
         <p>Crea alumnos, arma sus rutinas y revisa su progreso.</p>
       </div>
@@ -2093,6 +2163,17 @@ function renderTrainerDashboard(){
   app.innerHTML = `
     ${topbar(true, 'Inicio', 'goHome()')}
     <div class="content">
+      <div class="inline-form" style="margin-bottom:18px;">
+        <div class="field" style="margin-bottom:${state.trainerPin ? '10px' : '0'};">
+          <label>🔒 PIN del entrenador (4 dígitos, opcional)</label>
+          <input id="trainerPinSetInput" type="text" inputmode="numeric" maxlength="4" pattern="[0-9]*" placeholder="Sin PIN — cualquiera puede entrar como entrenador" autocomplete="off" value="${escapeHtml(state.trainerPin||'')}" style="width:100%; background:var(--bg); border:1px solid var(--line); border-radius:8px; padding:11px 12px; color:var(--text); font-family:var(--font-mono); font-size:16px; letter-spacing:0.2em;" />
+        </div>
+        <p style="font-family:var(--font-mono); font-size:11px; color:var(--text-dim); margin:0 0 10px;">Con PIN, vas a necesitarlo cada vez que entres como entrenador desde este u otro dispositivo. Los alumnos no lo van a ver.</p>
+        <div class="row-gap">
+          <button type="button" class="btn btn-primary btn-sm" onclick="saveTrainerPin(event)">Guardar PIN</button>
+          ${state.trainerPin ? `<button type="button" class="btn btn-secondary btn-sm" onclick="document.getElementById('trainerPinSetInput').value=''; saveTrainerPin(event);">Quitar PIN</button>` : ''}
+        </div>
+      </div>
       <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:16px;">
         <h2 style="font-size:22px;">Tus alumnos</h2>
         <button class="btn btn-primary btn-sm" onclick="toggleAddStudentForm()">+ Agregar</button>
@@ -2308,10 +2389,25 @@ function renderTrainerEditRoutine(){
   `;
 }
 
+let exerciseBrowseWarmup = false;
+function setExerciseBrowseWarmup(isWarmup){
+  exerciseBrowseWarmup = !!isWarmup;
+  const mainChip = document.getElementById('browseWarmupMainChip');
+  const warmupChip = document.getElementById('browseWarmupWarmupChip');
+  if(mainChip) mainChip.classList.toggle('chip-active', !exerciseBrowseWarmup);
+  if(warmupChip) warmupChip.classList.toggle('chip-active', exerciseBrowseWarmup);
+}
 function renderExerciseBrowserHtml(){
   const groups = distinctCatalogGroups();
   return `
     <div class="inline-form">
+      <div class="field">
+        <label>¿Dónde va?</label>
+        <div class="chip-row">
+          <button type="button" id="browseWarmupMainChip" class="chip ${!exerciseBrowseWarmup?'chip-active':''}" onclick="setExerciseBrowseWarmup(false)">Rutina principal</button>
+          <button type="button" id="browseWarmupWarmupChip" class="chip ${exerciseBrowseWarmup?'chip-active':''}" onclick="setExerciseBrowseWarmup(true)">🔥 Entrada en calor</button>
+        </div>
+      </div>
       <div class="field">
         <label>Buscar ejercicio</label>
         <input id="exerciseBrowseSearch" type="text" placeholder="Ej. sentadilla, press, remo…" autocomplete="off" oninput="handleExerciseBrowseSearch(event)" />
@@ -2649,10 +2745,13 @@ function renderRoutineEditor(d, r){
         <a href="${googleCalendarLink('Renovar rutina: ' + (r.name||'') + ' (' + (d.name||'') + ')', cycleInfo(r).endDate, 'El ciclo de ' + (r.durationWeeks) + ' semanas de ' + (d.name||'') + ' termina hoy. Revisá y armá la próxima rutina.')}" target="_blank" rel="noopener" class="btn btn-secondary" style="margin-top:10px; display:inline-block; text-decoration:none; text-align:center;">🔔 Agendar recordatorio en mi calendario</a>
       ` : '')}
     </div>
-    ${warmupList.length ? `
-      <div class="section-title">🔥 Entrada en calor</div>
-      <div class="stack" style="margin-bottom:20px;">${warmupRows}</div>
-    ` : ''}
+    <div class="section-title">🔥 Entrada en calor</div>
+    <div class="field" style="margin-bottom:14px;">
+      <label>Instrucciones detalladas (opcional)</label>
+      <textarea id="warmupNotesInput" placeholder="Ej. 8-10 min de bici o trote suave, después movilidad de tobillo, rodilla y cadera, terminar con 2 series de sentadilla sin peso..." onblur="saveWarmupNotes('${r.id}', event)">${escapeHtml(r.warmupNotes||'')}</textarea>
+    </div>
+    ${warmupList.length ? `<div class="stack" style="margin-bottom:14px;">${warmupRows}</div>` : `<div class="empty" style="padding:16px 8px; margin-bottom:14px;"><p>Todavía no agregaste ejercicios de entrada en calor.</p></div>`}
+    <button class="btn btn-ghost" style="width:100%; margin-bottom:20px;" onclick="openExerciseBrowser(true)">🔥 + Agregar ejercicio de entrada en calor</button>
     ${summaryHtml}
     <div class="section-title">Rutina</div>
     <div class="stack">
@@ -2674,6 +2773,15 @@ async function saveRoutineName(ev){
   state.currentData.routineName = val;
   await saveStudent(state.currentId, state.currentData);
   showToast('Nombre de la rutina guardado');
+}
+async function saveWarmupNotes(routineId, ev){
+  const val = ev.target.value.trim();
+  const r = state.currentData.routines.find(x => x.id === routineId);
+  if(!r) return;
+  if(val === (r.warmupNotes || '')) return;
+  r.warmupNotes = val;
+  await saveStudent(state.currentId, state.currentData);
+  showToast('Instrucciones de entrada en calor guardadas');
 }
 
 function computeExerciseSeries(d, exId){
@@ -3005,11 +3113,14 @@ function renderStudentRoutineTab(d){
   const draftPhoto = state.currentData.__draftPhoto || '';
   const clockActive = isWorkoutClockActive();
   const routineLabel = (getActiveRoutine() && getActiveRoutine().name) || 'Rutina de hoy';
+  const activeRoutineForNotes = getActiveRoutine();
+  const warmupNotes = activeRoutineForNotes ? (activeRoutineForNotes.warmupNotes || '') : '';
   return `
     ${!clockActive ? `<button class="btn btn-secondary" style="margin-bottom:14px;" onclick="startWorkoutClock('${escapeHtml(routineLabel).replace(/'/g,"\\'")}')">▶ Comenzar rutina</button>` : `<div class="mono" style="font-size:11px; color:var(--accent); margin-bottom:14px;">● Cronómetro corriendo — mirá arriba de la pantalla</div>`}
-    ${warmupList.length ? `
+    ${(warmupList.length || warmupNotes) ? `
       <div class="section-title">🔥 Entrada en calor</div>
-      <div style="margin-bottom:20px;">${warmupRows}</div>
+      ${warmupNotes ? `<div style="background:var(--surface); border:1px solid var(--line); border-radius:10px; padding:12px 14px; margin-bottom:14px; font-size:13px; line-height:1.5; white-space:pre-wrap;">${escapeHtml(warmupNotes)}</div>` : ''}
+      ${warmupList.length ? `<div style="margin-bottom:20px;">${warmupRows}</div>` : ''}
       <div class="section-title">Rutina</div>
     ` : ''}
     <div>${mainList.length ? mainRows : (warmupList.length ? `<div class="empty" style="padding:16px 8px;"><p>Sin ejercicios en la rutina principal todavía.</p></div>` : '')}</div>

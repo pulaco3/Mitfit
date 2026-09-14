@@ -883,6 +883,22 @@ function allExercisesFlat(d){
   render();
 })();
 
+/* ---------- Mantener la pantalla encendida mientras se usa la app ---------- */
+let wakeLock = null;
+async function requestWakeLock(){
+  try{
+    if('wakeLock' in navigator && !wakeLock){
+      wakeLock = await navigator.wakeLock.request('screen');
+      wakeLock.addEventListener('release', () => { wakeLock = null; });
+    }
+  }catch(e){ wakeLock = null; }
+}
+requestWakeLock();
+document.addEventListener('visibilitychange', () => {
+  if(document.visibilityState === 'visible') requestWakeLock();
+});
+document.addEventListener('click', () => { if(!wakeLock) requestWakeLock(); });
+
 /* ---------- Navigation ---------- */
 function goHome(){
   state.view = 'home'; state.currentId = null; state.currentData = null; state.currentRoutineId = null; state.formOpen = null;
@@ -1714,6 +1730,10 @@ function currentTabataExerciseName(){
   const c = tabataState.circuit.length ? tabataState.circuit : [tabataState.label];
   return c[(tabataState.round - 1) % c.length];
 }
+function nextTabataExerciseName(){
+  const c = tabataState.circuit.length ? tabataState.circuit : [tabataState.label];
+  return c[tabataState.round % c.length];
+}
 function startTabataSession(exId){
   const ex = activeExercises().find(e => e.id === exId);
   if(!ex || ex.type !== 'tabata') return;
@@ -1822,7 +1842,17 @@ function updateTabataUI(remainingOverride){
       : '¡Listo!';
   }
   const exEl = document.getElementById('tabataExName');
-  if(exEl) exEl.textContent = tabataState.phase === 'done' ? tabataState.label : currentTabataExerciseName();
+  if(exEl){
+    if(tabataState.phase === 'done'){
+      exEl.textContent = tabataState.label;
+    } else if(tabataState.phase === 'rest'){
+      exEl.textContent = 'Sigue: ' + nextTabataExerciseName();
+    } else if(tabataState.phase === 'prep'){
+      exEl.textContent = 'Primero: ' + currentTabataExerciseName();
+    } else {
+      exEl.textContent = 'Ahora: ' + currentTabataExerciseName();
+    }
+  }
   const roundEl = document.getElementById('tabataRound');
   if(roundEl) roundEl.textContent = tabataState.phase === 'done' ? '¡Bloque completo!' : ('Ronda ' + tabataState.round + ' / ' + tabataState.rounds);
   const pauseBtn = document.getElementById('tabataPauseBtn');

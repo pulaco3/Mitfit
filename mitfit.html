@@ -340,10 +340,15 @@
 
   /* Tabata overlay */
   .tabata-overlay{
-    position:fixed; inset:0; background:rgba(6,8,6,0.96); display:none; flex-direction:column;
+    position:fixed; inset:0; background:rgba(6,8,6,0.90); display:none; flex-direction:column;
     align-items:center; justify-content:center; z-index:90; padding:24px; text-align:center;
+    overflow:hidden;
   }
   .tabata-overlay.show{ display:flex; }
+  .tabata-bg-logo{
+    position:absolute; top:50%; left:50%; transform:translate(-50%,-50%);
+    width:75%; max-width:340px; opacity:0.14; pointer-events:none; filter:grayscale(1);
+  }
   .tabata-close{ position:absolute; top:18px; right:18px; background:none; border:none; color:var(--text-dim); font-size:24px; cursor:pointer; padding:6px; }
   .tabata-phase{ font-family:var(--font-display); font-size:26px; font-weight:700; letter-spacing:0.08em; text-transform:uppercase; margin-bottom:10px; }
   .tabata-phase.work{ color:var(--accent); }
@@ -1557,8 +1562,8 @@ function boxingBell(strikes, pitch){
   try{
     const ctx = new (window.AudioContext || window.webkitAudioContext)();
     const now = ctx.currentTime;
-    const ringDuration = 1.6;
-    const gap = 0.6;
+    const ringDuration = 2.6;
+    const gap = 1.0;
     const fundamental = pitch || 660;
     const partials = [1, 1.5, 2.0, 2.66, 3.4];
     const amps = [0.5, 0.32, 0.22, 0.14, 0.09];
@@ -1613,7 +1618,7 @@ mountTimerBar();
 
 /* ---------- Tabata timer ---------- */
 let tabataInterval = null;
-let tabataState = { active:false, blockId:null, circuit:[], work:20, rest:10, rounds:8, prep:10, phase:'prep', round:1, endTime:0, running:false, label:'' };
+let tabataState = { active:false, blockId:null, circuit:[], work:20, rest:10, rounds:8, prep:10, phase:'prep', round:1, endTime:0, running:false, label:'', lastCountdownAt:null };
 
 function mountTabataOverlay(){
   if(document.getElementById('tabataOverlay')) return;
@@ -1621,6 +1626,7 @@ function mountTabataOverlay(){
   overlay.id = 'tabataOverlay';
   overlay.className = 'tabata-overlay';
   overlay.innerHTML = `
+    <img class="tabata-bg-logo" src="${LOGO_HERO}" alt="" />
     <button class="tabata-close" onclick="confirmCloseTabata()">✕</button>
     <div id="tabataPhase" class="tabata-phase prep">Preparate</div>
     <div id="tabataTime" class="tabata-time prep">00:00</div>
@@ -1649,7 +1655,7 @@ function startTabataSession(exId){
     active:true, blockId: ex.id, circuit,
     work: ex.tabataWork || 20, rest: ex.tabataRest || 10, rounds: ex.tabataRounds || 8, prep,
     phase:'prep', round:1, running:true, label: ex.name || 'Tabata',
-    endTime: Date.now() + prep*1000
+    endTime: Date.now() + prep*1000, lastCountdownAt:null
   };
   const overlay = document.getElementById('tabataOverlay');
   if(overlay) overlay.classList.add('show');
@@ -1664,9 +1670,14 @@ function tickTabata(){
     advanceTabataPhase();
     return;
   }
+  if(remaining <= 3 && remaining !== tabataState.lastCountdownAt){
+    tabataState.lastCountdownAt = remaining;
+    tabataCountdownBeep();
+  }
   updateTabataUI(remaining);
 }
 function advanceTabataPhase(){
+  tabataState.lastCountdownAt = null;
   if(tabataState.phase === 'prep'){
     tabataState.phase = 'work';
     tabataState.endTime = Date.now() + tabataState.work*1000;
@@ -1708,6 +1719,24 @@ function tabataBeep(kind){
     boxingBell(1, 520);
   }
   if(navigator.vibrate) navigator.vibrate(kind === 'work' ? [180] : [80,80,80]);
+}
+function tabataCountdownBeep(){
+  try{
+    const ctx = new (window.AudioContext || window.webkitAudioContext)();
+    const o = ctx.createOscillator();
+    const g = ctx.createGain();
+    o.connect(g); g.connect(ctx.destination);
+    o.type = 'square';
+    o.frequency.value = 1000;
+    g.gain.value = 0.001;
+    const now = ctx.currentTime;
+    o.start(now);
+    g.gain.exponentialRampToValueAtTime(0.35, now + 0.015);
+    g.gain.exponentialRampToValueAtTime(0.001, now + 0.14);
+    o.stop(now + 0.16);
+    setTimeout(()=> ctx.close(), 400);
+  }catch(e){}
+  if(navigator.vibrate) navigator.vibrate(60);
 }
 function updateTabataUI(remainingOverride){
   const remaining = (remainingOverride !== undefined) ? remainingOverride : Math.max(0, Math.round((tabataState.endTime - Date.now())/1000));
@@ -1752,7 +1781,7 @@ function confirmCloseTabata(){
 }
 function closeTabata(){
   clearInterval(tabataInterval);
-  tabataState = { active:false, blockId:null, circuit:[], work:20, rest:10, rounds:8, prep:10, phase:'prep', round:1, endTime:0, running:false, label:'' };
+  tabataState = { active:false, blockId:null, circuit:[], work:20, rest:10, rounds:8, prep:10, phase:'prep', round:1, endTime:0, running:false, label:'', lastCountdownAt:null };
   const overlay = document.getElementById('tabataOverlay');
   if(overlay) overlay.classList.remove('show');
 }

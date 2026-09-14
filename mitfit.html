@@ -1520,6 +1520,26 @@ async function saveSession(){
   const statsText = volume.toLocaleString('es-AR') + ' kg totales' + durationText;
   showCompletionCelebration(statsText);
 }
+async function submitStudentNote(){
+  const input = document.getElementById('studentNoteInput');
+  const text = input ? input.value.trim() : '';
+  if(!text) { showToast('Escribí algo antes de enviar'); return; }
+  const activeRoutine = getActiveRoutine();
+  state.currentData.trainerNotes = state.currentData.trainerNotes || [];
+  state.currentData.trainerNotes.unshift({
+    id: uid(), date: todayISO(),
+    routineName: activeRoutine ? activeRoutine.name : '',
+    text
+  });
+  await saveStudent(state.currentId, state.currentData);
+  if(input) input.value = '';
+  showToast('Mensaje enviado a tu profe');
+}
+async function dismissTrainerNote(noteId){
+  state.currentData.trainerNotes = (state.currentData.trainerNotes || []).filter(n => n.id !== noteId);
+  await saveStudent(state.currentId, state.currentData);
+  render();
+}
 function handleSessionPhotoInput(ev){
   const url = ev.target.value.trim();
   state.currentData.__draftPhoto = url;
@@ -2918,6 +2938,23 @@ function volumeWaveSvg(points){
 }
 
 function renderProgressView(d, readOnly){
+  const notes = d.trainerNotes || [];
+  const notesHtml = (readOnly && notes.length) ? `
+    <div class="section-title">💬 Mensajes del alumno</div>
+    <div class="stack" style="margin-bottom:16px;">
+      ${notes.map(n => `
+        <div class="ex-row">
+          <div class="ex-head">
+            <div>
+              <div class="meta">${formatDate(n.date)}${n.routineName ? ' · ' + escapeHtml(n.routineName) : ''}</div>
+              <p style="margin:6px 0 0; font-size:14px; line-height:1.4; white-space:pre-wrap;">${escapeHtml(n.text)}</p>
+            </div>
+            <button class="icon-btn" onclick="dismissTrainerNote('${n.id}')">✕</button>
+          </div>
+        </div>
+      `).join('')}
+    </div>
+  ` : '';
   const exercises = allExercisesFlat(d);
   const sortedLogs = [...(d.logs||[])].sort((a,b)=> b.date.localeCompare(a.date));
   const volumeSeries = computeVolumeSeries(d);
@@ -2954,6 +2991,7 @@ function renderProgressView(d, readOnly){
   }).join('');
 
   return `
+    ${notesHtml}
     ${volumeSeries.length ? `
       <div class="section-title">Volumen por sesión</div>
       <div class="chart-card" style="margin-bottom:12px;">
@@ -3160,6 +3198,11 @@ function renderStudentRoutineTab(d){
       <img id="sessionPhotoPreview" style="display:${draftPhoto?'block':'none'}; max-width:140px; border-radius:10px; margin-top:8px; border:1px solid var(--line);" src="${escapeHtml(draftPhoto)}" />
     </div>
     <button class="btn btn-primary" style="margin-top:12px;" onclick="saveSession()">Guardar sesión</button>
+    <div class="field" style="margin-top:26px;">
+      <label>💬 ¿Querés contarle algo a tu profe sobre esta rutina?</label>
+      <textarea id="studentNoteInput" placeholder="Ej. me costó la última serie de sentadillas, o quiero cambiar tal ejercicio por dolor en la rodilla..."></textarea>
+    </div>
+    <button class="btn btn-secondary" style="margin-top:10px; width:100%;" onclick="submitStudentNote()">Enviar mensaje</button>
   `;
 }
 </script>

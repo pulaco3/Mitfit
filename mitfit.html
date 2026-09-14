@@ -345,12 +345,16 @@
   }
   .tabata-overlay.show{ display:flex; }
   .tabata-close{ position:absolute; top:18px; right:18px; background:none; border:none; color:var(--text-dim); font-size:24px; cursor:pointer; padding:6px; }
-  .tabata-phase{ font-family:var(--font-mono); font-size:14px; letter-spacing:0.18em; text-transform:uppercase; margin-bottom:10px; }
+  .tabata-phase{ font-family:var(--font-display); font-size:26px; font-weight:700; letter-spacing:0.08em; text-transform:uppercase; margin-bottom:10px; }
   .tabata-phase.work{ color:var(--accent); }
   .tabata-phase.rest{ color:var(--yellow); }
   .tabata-phase.prep{ color:var(--text-dim); }
   .tabata-phase.done{ color:var(--green); }
-  .tabata-time{ font-family:var(--font-display); font-size:84px; font-weight:700; line-height:1; margin-bottom:14px; color:var(--text); }
+  .tabata-time{ font-family:var(--font-display); font-size:84px; font-weight:700; line-height:1; margin-bottom:14px; }
+  .tabata-time.work{ color:var(--accent); }
+  .tabata-time.rest{ color:var(--yellow); }
+  .tabata-time.prep{ color:var(--text-dim); }
+  .tabata-time.done{ color:var(--green); }
   .tabata-exname{ font-family:var(--font-body); font-size:21px; font-weight:600; margin-bottom:8px; max-width:320px; color:var(--text); }
   .tabata-round{ font-family:var(--font-mono); font-size:13px; color:var(--text-dim); margin-bottom:32px; }
   .tabata-controls{ display:flex; gap:12px; }
@@ -1549,27 +1553,35 @@ function closeTimer(){
   const bar = document.getElementById('restTimerBar');
   if(bar) bar.classList.remove('show');
 }
-function beep(){
+function boxingBell(strikes, pitch){
   try{
     const ctx = new (window.AudioContext || window.webkitAudioContext)();
-    const playTone = (startAt, freq, dur) => {
-      const o = ctx.createOscillator();
-      const g = ctx.createGain();
-      o.connect(g); g.connect(ctx.destination);
-      o.type = 'square';
-      o.frequency.value = freq;
-      g.gain.value = 0.001;
-      o.start(startAt);
-      g.gain.exponentialRampToValueAtTime(0.45, startAt + 0.02);
-      g.gain.exponentialRampToValueAtTime(0.001, startAt + dur);
-      o.stop(startAt + dur + 0.05);
-    };
     const now = ctx.currentTime;
-    // Dos rondas de 3 tonos: más fuerte y casi 3x más largo que antes
-    const pattern = [0, 0.3, 0.6, 1.3, 1.6, 1.9];
-    pattern.forEach((offset, i) => playTone(now + offset, (i % 3 === 2) ? 660 : 880, 0.25));
-    setTimeout(()=> ctx.close(), 2800);
+    const ringDuration = 1.6;
+    const gap = 0.6;
+    const fundamental = pitch || 660;
+    const partials = [1, 1.5, 2.0, 2.66, 3.4];
+    const amps = [0.5, 0.32, 0.22, 0.14, 0.09];
+    for(let s=0; s<strikes; s++){
+      const startAt = now + s*gap;
+      partials.forEach((mult, i) => {
+        const o = ctx.createOscillator();
+        const g = ctx.createGain();
+        o.connect(g); g.connect(ctx.destination);
+        o.type = 'sine';
+        o.frequency.value = fundamental * mult;
+        g.gain.value = 0.0001;
+        o.start(startAt);
+        g.gain.exponentialRampToValueAtTime(amps[i], startAt + 0.008);
+        g.gain.exponentialRampToValueAtTime(0.0001, startAt + ringDuration);
+        o.stop(startAt + ringDuration + 0.05);
+      });
+    }
+    setTimeout(()=> ctx.close(), (strikes*gap + ringDuration + 0.3)*1000);
   }catch(e){}
+}
+function beep(){
+  boxingBell(3, 700);
 }
 
 function mountTimerBar(){
@@ -1611,7 +1623,7 @@ function mountTabataOverlay(){
   overlay.innerHTML = `
     <button class="tabata-close" onclick="confirmCloseTabata()">✕</button>
     <div id="tabataPhase" class="tabata-phase prep">Preparate</div>
-    <div id="tabataTime" class="tabata-time">00:00</div>
+    <div id="tabataTime" class="tabata-time prep">00:00</div>
     <div id="tabataExName" class="tabata-exname">—</div>
     <div id="tabataRound" class="tabata-round">Ronda 1</div>
     <div class="tabata-controls">
@@ -1690,35 +1702,19 @@ function finishTabata(){
   setTimeout(closeTabata, 3500);
 }
 function tabataBeep(kind){
-  try{
-    const ctx = new (window.AudioContext || window.webkitAudioContext)();
-    const playTone = (startAt, freq, dur) => {
-      const o = ctx.createOscillator();
-      const g = ctx.createGain();
-      o.connect(g); g.connect(ctx.destination);
-      o.type = 'square';
-      o.frequency.value = freq;
-      g.gain.value = 0.001;
-      o.start(startAt);
-      g.gain.exponentialRampToValueAtTime(0.4, startAt + 0.02);
-      g.gain.exponentialRampToValueAtTime(0.001, startAt + dur);
-      o.stop(startAt + dur + 0.05);
-    };
-    const now = ctx.currentTime;
-    if(kind === 'work'){
-      [0, 0.22].forEach(o => playTone(now+o, 1046, 0.18));
-    } else {
-      [0, 0.3].forEach(o => playTone(now+o, 523, 0.22));
-    }
-    setTimeout(()=> ctx.close(), 1400);
-  }catch(e){}
+  if(kind === 'work'){
+    boxingBell(2, 880);
+  } else {
+    boxingBell(1, 520);
+  }
   if(navigator.vibrate) navigator.vibrate(kind === 'work' ? [180] : [80,80,80]);
 }
 function updateTabataUI(remainingOverride){
   const remaining = (remainingOverride !== undefined) ? remainingOverride : Math.max(0, Math.round((tabataState.endTime - Date.now())/1000));
   const mm = String(Math.floor(remaining/60)).padStart(2,'0');
   const ss = String(remaining%60).padStart(2,'0');
-  const timeEl = document.getElementById('tabataTime'); if(timeEl) timeEl.textContent = mm+':'+ss;
+  const timeEl = document.getElementById('tabataTime');
+  if(timeEl){ timeEl.textContent = mm+':'+ss; timeEl.className = 'tabata-time ' + tabataState.phase; }
   const phaseEl = document.getElementById('tabataPhase');
   if(phaseEl){
     phaseEl.className = 'tabata-phase ' + tabataState.phase;

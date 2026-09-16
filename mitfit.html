@@ -844,6 +844,7 @@ let state = {
   view: 'home',
   studentsIndex: [],
   trainerPin: '',
+  amrapPlan: null,
   currentId: null,
   currentData: null,
   currentRoutineId: null,
@@ -879,9 +880,16 @@ function allExercisesFlat(d){
   state.studentsIndex = await getIndex();
   const settings = await getAppSettings();
   state.trainerPin = settings.trainerPin || '';
+  state.amrapPlan = settings.amrapPlan || null;
   state.loading = false;
   render();
 })();
+async function updateAppSettings(partial){
+  const current = await getAppSettings();
+  const merged = { ...current, ...partial };
+  await saveAppSettings(merged);
+  return merged;
+}
 
 /* ---------- Mantener la pantalla encendida mientras se usa la app ---------- */
 let wakeLock = null;
@@ -950,7 +958,7 @@ async function saveTrainerPin(ev){
   const val = input ? input.value.trim() : '';
   if(val && !/^\d{4}$/.test(val)){ showToast('El PIN debe tener 4 dígitos'); return; }
   state.trainerPin = val;
-  await saveAppSettings({ trainerPin: val });
+  await updateAppSettings({ trainerPin: val });
   showToast(val ? 'PIN del entrenador guardado' : 'PIN del entrenador quitado');
   render();
 }
@@ -1174,7 +1182,7 @@ function syncAmrapDraftFromDom(){
   if(inputs.length) amrapDraftCircuit = Array.from(inputs).map(i => i.value);
 }
 function openAmrapPlanForm(){
-  const plan = state.currentData.amrapPlan;
+  const plan = state.amrapPlan;
   amrapDraftCircuit = (plan && plan.exercises && plan.exercises.length) ? [...plan.exercises] : [''];
   state.formOpen = 'editAmrapPlan';
   render();
@@ -1195,7 +1203,7 @@ function removeAmrapCircuitRow(idx){
   render();
 }
 function renderAmrapPlanFormHtml(){
-  const plan = state.currentData.amrapPlan || {};
+  const plan = state.amrapPlan || {};
   const rows = amrapDraftCircuit.map((val, idx) => `
     <div class="field-row" style="align-items:center; margin-bottom:8px;">
       <input class="amrap-circuit-input" type="text" placeholder="Ej. 10 burpees" autocomplete="off" value="${escapeHtml(val)}" style="flex:1; background:var(--bg); border:1px solid var(--line); border-radius:8px; padding:9px 10px; color:var(--text); font-family:var(--font-body); font-size:13px;" />
@@ -1203,7 +1211,7 @@ function renderAmrapPlanFormHtml(){
     </div>
   `).join('');
   return `
-    <div class="inline-form" style="margin-top:10px;">
+    <div class="inline-form" style="margin-top:10px; margin-bottom:20px;">
       <div class="field-row">
         <div class="field"><label>Tiempo total (min)</label><input id="amrapMinutes" type="number" min="1" value="${plan.minutes||12}" /></div>
         <div class="field"><label>Preparación (seg)</label><input id="amrapPrep" type="number" min="0" step="5" value="${plan.prep||10}" /></div>
@@ -1225,15 +1233,15 @@ async function submitAmrapPlanForm(){
   const minutes = Math.max(1, parseInt(document.getElementById('amrapMinutes')?.value) || 12);
   const prep = Math.max(0, parseInt(document.getElementById('amrapPrep')?.value) || 10);
   const exercises = amrapDraftCircuit.map(v => v.trim()).filter(Boolean);
-  state.currentData.amrapPlan = { minutes, prep, exercises };
-  await saveStudent(state.currentId, state.currentData);
+  state.amrapPlan = { minutes, prep, exercises };
+  await updateAppSettings({ amrapPlan: state.amrapPlan });
   state.formOpen = null;
-  showToast('Plan B guardado');
+  showToast('Plan B guardado para todos los alumnos');
   render();
 }
 async function deleteAmrapPlan(){
-  state.currentData.amrapPlan = null;
-  await saveStudent(state.currentId, state.currentData);
+  state.amrapPlan = null;
+  await updateAppSettings({ amrapPlan: null });
   showToast('Plan B eliminado');
   render();
 }
@@ -2114,7 +2122,7 @@ function mountAmrapOverlay(){
 mountAmrapOverlay();
 
 function startAmrapSession(){
-  const plan = state.currentData && state.currentData.amrapPlan;
+  const plan = state.amrapPlan;
   if(!plan || !plan.exercises || !plan.exercises.length){ showToast('Tu profe todavía no armó el Plan B'); return; }
   clearInterval(amrapInterval);
   const prep = plan.prep || 10;
@@ -2566,6 +2574,30 @@ function renderTrainerDashboard(){
           ${state.trainerPin ? `<button type="button" class="btn btn-secondary btn-sm" onclick="document.getElementById('trainerPinSetInput').value=''; saveTrainerPin(event);">Quitar PIN</button>` : ''}
         </div>
       </div>
+
+      <div class="section-title" style="margin-top:0;">🅱️ Plan B (AMRAP) — para todos los alumnos</div>
+      <p style="font-size:12px; color:var(--text-dim); margin:-4px 0 12px; line-height:1.4;">Un circuito corto a contrarreloj que cualquier alumno puede elegir en vez de su rutina normal, sin culpa. Se configura una sola vez y aparece para todos.</p>
+      ${state.formOpen === 'editAmrapPlan' ? renderAmrapPlanFormHtml() : (state.amrapPlan && state.amrapPlan.exercises && state.amrapPlan.exercises.length ? `
+        <div class="ex-row" style="margin-bottom:20px;">
+          <div class="ex-head">
+            <div style="display:flex; gap:12px;">
+              <div class="ex-photo-placeholder">🅱️</div>
+              <div>
+                <h4>${state.amrapPlan.minutes} min AMRAP</h4>
+                <div class="meta">${state.amrapPlan.exercises.map(x=>escapeHtml(x)).join(' → ')}</div>
+              </div>
+            </div>
+            <div style="display:flex; gap:2px;">
+              <button class="icon-btn" onclick="openAmrapPlanForm()">✎</button>
+              <button class="icon-btn danger" onclick="deleteAmrapPlan()">✕</button>
+            </div>
+          </div>
+        </div>
+      ` : `
+        <div class="empty" style="padding:16px 8px; margin-bottom:14px;"><p>Todavía no configuraste el Plan B.</p></div>
+        <button class="btn btn-ghost" style="width:100%; margin-bottom:20px;" onclick="openAmrapPlanForm()">+ Configurar Plan B</button>
+      `)}
+
       <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:16px;">
         <h2 style="font-size:22px;">Tus alumnos</h2>
         <button class="btn btn-primary btn-sm" onclick="toggleAddStudentForm()">+ Agregar</button>
@@ -2742,7 +2774,6 @@ function routineCardHtml(routine, mode){
 function renderRoutinesFolderHtml(d){
   const routines = d.routines || [];
   const cards = routines.map(r => routineCardHtml(r, 'trainer')).join('');
-  const plan = d.amrapPlan;
   return `
     <div class="section-title">${escapeHtml(d.name)} (${routines.length})</div>
     ${routines.length ? cards : `<div class="empty" style="padding:20px 8px;"><p>Todavía no armaste ninguna rutina para este alumno.</p></div>`}
@@ -2768,29 +2799,6 @@ function renderRoutinesFolderHtml(d){
         </div>
       </div>
     ` : `<button class="btn btn-ghost" style="margin-top:14px;" onclick="openAddRoutineForm()">+ Nueva rutina</button>`}
-
-    <div class="section-title" style="margin-top:28px;">🅱️ Plan B (AMRAP)</div>
-    <p style="font-size:12px; color:var(--text-dim); margin:-4px 0 12px; line-height:1.4;">Para los días que ${escapeHtml(d.name)} no puede o no quiere hacer la rutina de hoy: un circuito corto a contrarreloj como alternativa, sin culpa.</p>
-    ${state.formOpen === 'editAmrapPlan' ? renderAmrapPlanFormHtml() : (plan && plan.exercises && plan.exercises.length ? `
-      <div class="ex-row">
-        <div class="ex-head">
-          <div style="display:flex; gap:12px;">
-            <div class="ex-photo-placeholder">🅱️</div>
-            <div>
-              <h4>${plan.minutes} min AMRAP</h4>
-              <div class="meta">${plan.exercises.map(x=>escapeHtml(x)).join(' → ')}</div>
-            </div>
-          </div>
-          <div style="display:flex; gap:2px;">
-            <button class="icon-btn" onclick="openAmrapPlanForm()">✎</button>
-            <button class="icon-btn danger" onclick="deleteAmrapPlan()">✕</button>
-          </div>
-        </div>
-      </div>
-    ` : `
-      <div class="empty" style="padding:16px 8px;"><p>Todavía no configuraste el Plan B.</p></div>
-      <button class="btn btn-ghost" style="width:100%;" onclick="openAmrapPlanForm()">+ Configurar Plan B</button>
-    `)}
   `;
 }
 function renderTrainerEditRoutine(){
@@ -3563,8 +3571,8 @@ function renderStudentRoutineTab(d){
       </div>
     </div>
     ${!clockActive ? `<button class="btn btn-secondary" style="margin-bottom:14px;" onclick="startWorkoutClock('${escapeHtml(routineLabel).replace(/'/g,"\\'")}')">▶ Comenzar rutina</button>` : `<div class="mono" style="font-size:11px; color:var(--accent); margin-bottom:14px;">● Cronómetro corriendo — mirá arriba de la pantalla</div>`}
-    ${(state.currentData.amrapPlan && state.currentData.amrapPlan.exercises && state.currentData.amrapPlan.exercises.length) ? `
-      <button class="btn btn-ghost" style="margin-bottom:20px; width:100%;" onclick="startAmrapSession()">🅱️ Hoy prefiero el Plan B (${state.currentData.amrapPlan.minutes} min AMRAP)</button>
+    ${(state.amrapPlan && state.amrapPlan.exercises && state.amrapPlan.exercises.length) ? `
+      <button class="btn btn-ghost" style="margin-bottom:20px; width:100%;" onclick="startAmrapSession()">🅱️ Hoy prefiero el Plan B (${state.amrapPlan.minutes} min AMRAP)</button>
     ` : ''}
     ${(warmupList.length || warmupNotes) ? `
       <div class="section-title">🔥 Entrada en calor</div>

@@ -1035,6 +1035,16 @@ async function saveStudentPin(ev){
   await saveIndex(state.studentsIndex);
   showToast(pin ? 'PIN guardado' : 'PIN quitado');
 }
+async function saveStudentPhoto(ev){
+  const val = ev.target.value.trim();
+  const entry = state.studentsIndex.find(s => s.id === state.currentId);
+  if(!entry) return;
+  if(val === (entry.photo || '')) return;
+  entry.photo = val;
+  await saveIndex(state.studentsIndex);
+  showToast(val ? 'Foto de perfil guardada' : 'Foto de perfil quitada');
+  render();
+}
 async function saveStudentName(){
   const input = document.getElementById('studentNameInput');
   const val = input ? input.value.trim() : '';
@@ -1154,6 +1164,77 @@ async function submitTabataForm(editingId){
   await saveStudent(state.currentId, state.currentData);
   state.formOpen = null;
   showToast('Bloque Tabata guardado');
+  render();
+}
+
+/* ---------- Trainer: AMRAP "Plan B" builder ---------- */
+let amrapDraftCircuit = [''];
+function syncAmrapDraftFromDom(){
+  const inputs = document.querySelectorAll('.amrap-circuit-input');
+  if(inputs.length) amrapDraftCircuit = Array.from(inputs).map(i => i.value);
+}
+function openAmrapPlanForm(){
+  const plan = state.currentData.amrapPlan;
+  amrapDraftCircuit = (plan && plan.exercises && plan.exercises.length) ? [...plan.exercises] : [''];
+  state.formOpen = 'editAmrapPlan';
+  render();
+}
+function addAmrapCircuitRow(){
+  syncAmrapDraftFromDom();
+  amrapDraftCircuit.push('');
+  render();
+  setTimeout(()=>{
+    const inputs = document.querySelectorAll('.amrap-circuit-input');
+    inputs[inputs.length-1]?.focus();
+  }, 50);
+}
+function removeAmrapCircuitRow(idx){
+  syncAmrapDraftFromDom();
+  amrapDraftCircuit.splice(idx, 1);
+  if(!amrapDraftCircuit.length) amrapDraftCircuit = [''];
+  render();
+}
+function renderAmrapPlanFormHtml(){
+  const plan = state.currentData.amrapPlan || {};
+  const rows = amrapDraftCircuit.map((val, idx) => `
+    <div class="field-row" style="align-items:center; margin-bottom:8px;">
+      <input class="amrap-circuit-input" type="text" placeholder="Ej. 10 burpees" autocomplete="off" value="${escapeHtml(val)}" style="flex:1; background:var(--bg); border:1px solid var(--line); border-radius:8px; padding:9px 10px; color:var(--text); font-family:var(--font-body); font-size:13px;" />
+      <button type="button" class="icon-btn danger" onclick="removeAmrapCircuitRow(${idx})">✕</button>
+    </div>
+  `).join('');
+  return `
+    <div class="inline-form" style="margin-top:10px;">
+      <div class="field-row">
+        <div class="field"><label>Tiempo total (min)</label><input id="amrapMinutes" type="number" min="1" value="${plan.minutes||12}" /></div>
+        <div class="field"><label>Preparación (seg)</label><input id="amrapPrep" type="number" min="0" step="5" value="${plan.prep||10}" /></div>
+      </div>
+      <div class="field">
+        <label>Circuito (los ejercicios que repite tantas veces como pueda hasta que se acabe el tiempo)</label>
+        ${rows}
+        <button type="button" class="btn btn-ghost btn-sm" onclick="addAmrapCircuitRow()">+ Agregar ejercicio</button>
+      </div>
+      <div class="row-gap" style="margin-top:12px;">
+        <button type="button" class="btn btn-primary" style="flex:1;" onclick="submitAmrapPlanForm()">Guardar Plan B</button>
+        <button type="button" class="btn btn-secondary" style="flex:1;" onclick="closeExerciseForm()">Cancelar</button>
+      </div>
+    </div>
+  `;
+}
+async function submitAmrapPlanForm(){
+  syncAmrapDraftFromDom();
+  const minutes = Math.max(1, parseInt(document.getElementById('amrapMinutes')?.value) || 12);
+  const prep = Math.max(0, parseInt(document.getElementById('amrapPrep')?.value) || 10);
+  const exercises = amrapDraftCircuit.map(v => v.trim()).filter(Boolean);
+  state.currentData.amrapPlan = { minutes, prep, exercises };
+  await saveStudent(state.currentId, state.currentData);
+  state.formOpen = null;
+  showToast('Plan B guardado');
+  render();
+}
+async function deleteAmrapPlan(){
+  state.currentData.amrapPlan = null;
+  await saveStudent(state.currentId, state.currentData);
+  showToast('Plan B eliminado');
   render();
 }
 
@@ -1690,8 +1771,104 @@ function boxingBell(strikes, pitch){
     setTimeout(()=> ctx.close(), (strikes*gap + ringDuration + 0.3)*1000);
   }catch(e){}
 }
+function playPresetChime(strikes, pitch){
+  try{
+    const ctx = new (window.AudioContext || window.webkitAudioContext)();
+    const now = ctx.currentTime;
+    const gap = 1.0;
+    const playNote = (startAt, freq, amp, decay) => {
+      const o = ctx.createOscillator(); const g = ctx.createGain();
+      o.connect(g); g.connect(ctx.destination);
+      o.type = 'sine'; o.frequency.value = freq;
+      g.gain.value = 0.0001; o.start(startAt);
+      g.gain.exponentialRampToValueAtTime(amp, startAt+0.01);
+      g.gain.exponentialRampToValueAtTime(0.0001, startAt+decay);
+      o.stop(startAt+decay+0.05);
+    };
+    for(let s=0; s<strikes; s++){
+      const startAt = now + s*gap;
+      const f1 = pitch || 660;
+      playNote(startAt, f1, 0.4, 0.9);
+      playNote(startAt+0.28, f1*0.75, 0.32, 1.1);
+    }
+    setTimeout(()=> ctx.close(), (strikes*gap+1.6)*1000);
+  }catch(e){}
+}
+function playPresetWhistle(strikes, pitch){
+  try{
+    const ctx = new (window.AudioContext || window.webkitAudioContext)();
+    const now = ctx.currentTime;
+    const gap = 0.9;
+    for(let s=0; s<strikes; s++){
+      const startAt = now + s*gap;
+      const o = ctx.createOscillator(); const g = ctx.createGain();
+      o.connect(g); g.connect(ctx.destination);
+      o.type = 'sine';
+      const base = pitch ? pitch*1.6 : 1400;
+      o.frequency.setValueAtTime(base*0.7, startAt);
+      o.frequency.linearRampToValueAtTime(base, startAt+0.15);
+      g.gain.value = 0.0001; o.start(startAt);
+      g.gain.exponentialRampToValueAtTime(0.32, startAt+0.03);
+      g.gain.exponentialRampToValueAtTime(0.0001, startAt+0.55);
+      o.stop(startAt+0.6);
+    }
+    setTimeout(()=> ctx.close(), (strikes*gap+0.8)*1000);
+  }catch(e){}
+}
+function playPresetMarimba(strikes, pitch){
+  try{
+    const ctx = new (window.AudioContext || window.webkitAudioContext)();
+    const now = ctx.currentTime;
+    const gap = 0.9;
+    const base = pitch || 660;
+    for(let s=0; s<strikes; s++){
+      const startAt = now + s*gap;
+      [0, 0.14, 0.28].forEach((offset, i) => {
+        const freq = base * [1, 1.25, 1.5][i];
+        const o = ctx.createOscillator(); const g = ctx.createGain();
+        o.connect(g); g.connect(ctx.destination);
+        o.type = 'triangle'; o.frequency.value = freq;
+        g.gain.value = 0.0001; o.start(startAt+offset);
+        g.gain.exponentialRampToValueAtTime(0.3, startAt+offset+0.01);
+        g.gain.exponentialRampToValueAtTime(0.0001, startAt+offset+0.35);
+        o.stop(startAt+offset+0.4);
+      });
+    }
+    setTimeout(()=> ctx.close(), (strikes*gap+1)*1000);
+  }catch(e){}
+}
+function playPresetClassic(strikes, pitch){
+  try{
+    const ctx = new (window.AudioContext || window.webkitAudioContext)();
+    const now = ctx.currentTime;
+    const gap = 0.5;
+    const base = pitch || 800;
+    for(let s=0; s<strikes; s++){
+      const startAt = now + s*gap;
+      const o = ctx.createOscillator(); const g = ctx.createGain();
+      o.connect(g); g.connect(ctx.destination);
+      o.type = 'square'; o.frequency.value = base;
+      g.gain.value = 0.0001; o.start(startAt);
+      g.gain.exponentialRampToValueAtTime(0.3, startAt+0.02);
+      g.gain.exponentialRampToValueAtTime(0.0001, startAt+0.22);
+      o.stop(startAt+0.25);
+    }
+    setTimeout(()=> ctx.close(), (strikes*gap+0.4)*1000);
+  }catch(e){}
+}
+const SOUND_PRESETS = { bell: boxingBell, chime: playPresetChime, whistle: playPresetWhistle, marimba: playPresetMarimba, classic: playPresetClassic };
+const SOUND_PRESET_LABELS = { bell:'🥊 Campana de boxeo', chime:'🔔 Timbre', whistle:'📯 Silbato', marimba:'🎵 Xilófono', classic:'🚨 Beep clásico' };
+function playAlertSound(strikes, pitch){
+  const key = (state.currentData && state.currentData.soundPref) || 'bell';
+  (SOUND_PRESETS[key] || boxingBell)(strikes, pitch);
+}
+async function setSoundPref(key){
+  state.currentData.soundPref = key;
+  await saveStudent(state.currentId, state.currentData);
+  playAlertSound(2, 700);
+}
 function beep(){
-  boxingBell(3, 700);
+  playAlertSound(3, 700);
 }
 
 function mountTimerBar(){
@@ -1823,9 +2000,9 @@ function finishTabata(){
 }
 function tabataBeep(kind){
   if(kind === 'work'){
-    boxingBell(2, 880);
+    playAlertSound(2, 880);
   } else {
-    boxingBell(1, 520);
+    playAlertSound(1, 520);
   }
   if(navigator.vibrate) navigator.vibrate(kind === 'work' ? [180] : [80,80,80]);
 }
@@ -1907,6 +2084,165 @@ function closeTabata(){
 document.addEventListener('visibilitychange', () => {
   if(!document.hidden && tabataState.active && tabataState.running){
     tickTabata();
+  }
+});
+
+/* ---------- AMRAP "Plan B" timer ---------- */
+let amrapInterval = null;
+let amrapState = { active:false, minutes:0, prep:10, exercises:[], phase:'prep', rounds:0, endTime:0, running:false, lastCountdownAt:null, roundTimes:[], lastMarkAt:0 };
+
+function mountAmrapOverlay(){
+  if(document.getElementById('amrapOverlay')) return;
+  const overlay = document.createElement('div');
+  overlay.id = 'amrapOverlay';
+  overlay.className = 'tabata-overlay';
+  overlay.innerHTML = `
+    <img class="tabata-bg-logo" src="${LOGO_HERO}" alt="" />
+    <button class="tabata-close" onclick="confirmCloseAmrap()">✕</button>
+    <div id="amrapPhase" class="tabata-phase prep">Preparate</div>
+    <div id="amrapTime" class="tabata-time prep">00:00</div>
+    <div id="amrapRounds" class="tabata-exname">0 rondas completas</div>
+    <div id="amrapCircuit" class="tabata-round" style="max-width:300px; line-height:1.5;"></div>
+    <div id="amrapSplits" class="mono" style="font-size:12px; color:var(--text-dim); margin-bottom:14px; max-width:300px;"></div>
+    <div class="tabata-controls">
+      <button id="amrapPauseBtn" onclick="toggleAmrapPause()">⏸ Pausar</button>
+      <button onclick="incrementAmrapRound()">✅ +1 ronda</button>
+    </div>
+  `;
+  document.body.appendChild(overlay);
+}
+mountAmrapOverlay();
+
+function startAmrapSession(){
+  const plan = state.currentData && state.currentData.amrapPlan;
+  if(!plan || !plan.exercises || !plan.exercises.length){ showToast('Tu profe todavía no armó el Plan B'); return; }
+  clearInterval(amrapInterval);
+  const prep = plan.prep || 10;
+  amrapState = {
+    active:true, minutes: plan.minutes || 12, prep, exercises: plan.exercises,
+    phase:'prep', rounds:0, running:true, endTime: Date.now() + prep*1000, lastCountdownAt:null,
+    roundTimes:[], lastMarkAt:0
+  };
+  const overlay = document.getElementById('amrapOverlay');
+  if(overlay) overlay.classList.add('show');
+  updateAmrapUI();
+  amrapInterval = setInterval(tickAmrap, 250);
+  requestNotifPermission();
+}
+function tickAmrap(){
+  if(!amrapState.running) return;
+  const remaining = Math.max(0, Math.round((amrapState.endTime - Date.now())/1000));
+  if(remaining <= 0){
+    advanceAmrapPhase();
+    return;
+  }
+  if(remaining <= 3 && remaining !== amrapState.lastCountdownAt){
+    amrapState.lastCountdownAt = remaining;
+    tabataCountdownBeep();
+  }
+  updateAmrapUI(remaining);
+}
+function advanceAmrapPhase(){
+  amrapState.lastCountdownAt = null;
+  if(amrapState.phase === 'prep'){
+    amrapState.phase = 'go';
+    amrapState.endTime = Date.now() + amrapState.minutes*60*1000;
+    amrapState.lastMarkAt = Date.now();
+    playAlertSound(2, 880);
+    updateAmrapUI();
+  } else {
+    finishAmrap();
+  }
+}
+async function finishAmrap(){
+  amrapState.phase = 'done';
+  amrapState.running = false;
+  clearInterval(amrapInterval);
+  updateAmrapUI(0);
+  playAlertSound(3, 700);
+  if(navigator.vibrate) navigator.vibrate([300,150,300,150,300,150,500]);
+  try{
+    if('Notification' in window && Notification.permission === 'granted'){
+      new Notification('MITFIT · Plan B terminado', { body: 'Completó ' + amrapState.rounds + ' rondas', tag:'mitfit-amrap' });
+    }
+  }catch(e){}
+  state.currentData.trainerNotes = state.currentData.trainerNotes || [];
+  const splitsText = amrapState.roundTimes.length
+    ? ' Rondas: ' + amrapState.roundTimes.map((t,i)=> 'R'+(i+1)+' '+formatDuration(t)).join(', ') + '.'
+    : '';
+  state.currentData.trainerNotes.unshift({
+    id: uid(), date: todayISO(), routineName: 'Plan B (AMRAP)',
+    text: 'Hizo el Plan B en lugar de la rutina de hoy: ' + amrapState.rounds + ' rondas en ' + amrapState.minutes + ' min.' + splitsText
+  });
+  await saveStudent(state.currentId, state.currentData);
+  setTimeout(closeAmrap, 3500);
+}
+function incrementAmrapRound(){
+  if(amrapState.phase !== 'go') return;
+  const now = Date.now();
+  const splitSeconds = Math.max(1, Math.round((now - amrapState.lastMarkAt)/1000));
+  amrapState.roundTimes.push(splitSeconds);
+  amrapState.lastMarkAt = now;
+  amrapState.rounds += 1;
+  updateAmrapUI();
+}
+function updateAmrapUI(remainingOverride){
+  const remaining = (remainingOverride !== undefined) ? remainingOverride : Math.max(0, Math.round((amrapState.endTime - Date.now())/1000));
+  const mm = String(Math.floor(remaining/60)).padStart(2,'0');
+  const ss = String(remaining%60).padStart(2,'0');
+  const phaseKey = amrapState.phase === 'go' ? 'work' : amrapState.phase;
+  const timeEl = document.getElementById('amrapTime');
+  if(timeEl){ timeEl.textContent = mm+':'+ss; timeEl.className = 'tabata-time ' + phaseKey; }
+  const phaseEl = document.getElementById('amrapPhase');
+  if(phaseEl){
+    phaseEl.className = 'tabata-phase ' + phaseKey;
+    phaseEl.textContent = amrapState.phase === 'prep' ? 'Preparate' : amrapState.phase === 'go' ? 'AMRAP en marcha' : '¡Listo!';
+  }
+  const roundsEl = document.getElementById('amrapRounds');
+  if(roundsEl) roundsEl.textContent = amrapState.phase === 'done'
+    ? ('¡' + amrapState.rounds + ' ronda' + (amrapState.rounds===1?'':'s') + ' completadas!')
+    : (amrapState.rounds + ' ronda' + (amrapState.rounds===1?'':'s') + ' completas');
+  const circuitEl = document.getElementById('amrapCircuit');
+  if(circuitEl) circuitEl.textContent = amrapState.exercises.join(' · ');
+  const splitsEl = document.getElementById('amrapSplits');
+  if(splitsEl){
+    if(amrapState.roundTimes.length){
+      const fastest = Math.min(...amrapState.roundTimes);
+      splitsEl.innerHTML = amrapState.roundTimes.map((t, i) =>
+        `<span style="${t===fastest?'color:var(--accent); font-weight:700;':''}">R${i+1}: ${formatDuration(t) || '0:0'+t}</span>`
+      ).join(' &nbsp;·&nbsp; ');
+    } else {
+      splitsEl.textContent = '';
+    }
+  }
+  const pauseBtn = document.getElementById('amrapPauseBtn');
+  if(pauseBtn) pauseBtn.textContent = amrapState.running ? '⏸ Pausar' : '▶ Seguir';
+}
+function toggleAmrapPause(){
+  if(amrapState.phase === 'done') return;
+  amrapState.running = !amrapState.running;
+  if(amrapState.running){
+    const remaining = Math.max(0, Math.round((amrapState.endTime - Date.now())/1000)) || 1;
+    amrapState.endTime = Date.now() + remaining*1000;
+    amrapInterval = setInterval(tickAmrap, 250);
+  } else {
+    clearInterval(amrapInterval);
+  }
+  updateAmrapUI();
+}
+function confirmCloseAmrap(){
+  if(amrapState.phase === 'done'){ closeAmrap(); return; }
+  showConfirmDialog('¿Salir del Plan B? Se va a perder el progreso de esta sesión.', closeAmrap);
+}
+function closeAmrap(){
+  clearInterval(amrapInterval);
+  amrapState = { active:false, minutes:0, prep:10, exercises:[], phase:'prep', rounds:0, endTime:0, running:false, lastCountdownAt:null };
+  const overlay = document.getElementById('amrapOverlay');
+  if(overlay) overlay.classList.remove('show');
+}
+document.addEventListener('visibilitychange', () => {
+  if(!document.hidden && amrapState.active && amrapState.running){
+    tickAmrap();
   }
 });
 
@@ -2130,13 +2466,11 @@ function renderPickStudent(){
   const list = state.studentsIndex;
   if(state.formOpen === 'enterPin'){
     const entry = list.find(s => s.id === pinTargetId);
-    const c = plateColorFor(entry?.colorIndex ?? 0);
-    const initial = (entry?.name || '?').trim().charAt(0).toUpperCase();
     app.innerHTML = `
       ${topbar(true, 'Alumnos', 'cancelPinEntry()')}
       <div class="content">
         <div style="text-align:center; margin-top:20px;">
-          <div class="plate ${c.text==='light'?'plate-text-light':'plate-text-dark'}" style="width:64px;height:64px;font-size:24px;background:${c.bg};border-color:${c.border};border-width:3px; margin:0 auto 14px;">${initial}</div>
+          <div style="display:flex; justify-content:center; margin:0 auto 14px;">${avatarHtml(entry, 64, 24)}</div>
           <h2 style="font-size:20px; margin-bottom:6px;">${escapeHtml(entry?.name||'')}</h2>
           <p style="color:var(--text-dim); font-size:13px; margin-bottom:20px;">Ingresá tu PIN de 4 dígitos</p>
         </div>
@@ -2193,12 +2527,20 @@ function submitPinEntry(ev){
   }
 }
 
+function avatarHtml(entry, size, fontSize){
+  size = size || 44; fontSize = fontSize || 16;
+  if(entry && entry.photo){
+    return `<img src="${escapeHtml(entry.photo)}" style="width:${size}px;height:${size}px;border-radius:50%;object-fit:cover;border:3px solid var(--line); flex-shrink:0;" alt="" onerror="this.style.display='none'; this.nextElementSibling && (this.nextElementSibling.style.display='flex');" />
+            <div class="plate ${plateColorFor(entry?.colorIndex ?? 0).text==='light'?'plate-text-light':'plate-text-dark'}" style="display:none; width:${size}px;height:${size}px;font-size:${fontSize}px;background:${plateColorFor(entry?.colorIndex ?? 0).bg};border-color:${plateColorFor(entry?.colorIndex ?? 0).border};border-width:3px;">${(entry?.name||'?').trim().charAt(0).toUpperCase()}</div>`;
+  }
+  const c = plateColorFor(entry?.colorIndex ?? 0);
+  const initial = (entry?.name || '?').trim().charAt(0).toUpperCase();
+  return `<div class="plate ${c.text==='light'?'plate-text-light':'plate-text-dark'}" style="width:${size}px;height:${size}px;font-size:${fontSize}px;background:${c.bg};border-color:${c.border};border-width:3px;">${initial}</div>`;
+}
 function studentCardHtml(s, onclick){
-  const c = plateColorFor(s.colorIndex ?? 0);
-  const initial = (s.name || '?').trim().charAt(0).toUpperCase();
   return `
     <div class="student-card" onclick="${onclick}">
-      <div class="plate ${c.text==='light'?'plate-text-light':'plate-text-dark'}" style="width:44px;height:44px;font-size:16px;background:${c.bg};border-color:${c.border};border-width:3px;">${initial}</div>
+      ${avatarHtml(s, 44, 16)}
       <div class="info">
         <h3>${escapeHtml(s.name)}</h3>
         <p>${s.pin ? '🔒 toca para continuar' : 'toca para continuar'}</p>
@@ -2263,19 +2605,23 @@ function renderTrainerEditStudent(){
     return;
   }
   const indexEntry = state.studentsIndex.find(s=>s.id===state.currentId);
-  const c = plateColorFor(indexEntry?.colorIndex ?? 0);
-  const initial = (d.name||'?').charAt(0).toUpperCase();
+  const draftPhotoInput = (indexEntry?.photo || '');
 
   app.innerHTML = `
     ${topbar(true, 'Alumnos', 'goTrainerDashboard()')}
     <div class="content">
       <div style="display:flex; align-items:center; gap:12px; margin-bottom:12px;">
-        <div class="plate ${c.text==='light'?'plate-text-light':'plate-text-dark'}" style="width:48px;height:48px;font-size:18px;background:${c.bg};border-color:${c.border};border-width:3px;">${initial}</div>
+        ${avatarHtml({...indexEntry, name: d.name}, 48, 18)}
         <div style="flex:1;">
           <input id="studentNameInput" type="text" value="${escapeHtml(d.name)}" style="width:100%; background:none; border:none; border-bottom:1px dashed var(--line); padding:2px 0; color:var(--text); font-family:var(--font-display); font-size:20px; font-weight:600;" />
         </div>
         <button class="btn btn-primary btn-sm" onclick="saveStudentName()">Guardar</button>
         <button class="icon-btn danger" onclick="confirmDeleteStudent('${state.currentId}')" title="Eliminar alumno">🗑</button>
+      </div>
+
+      <div class="field" style="margin-bottom:14px;">
+        <label>📷 Foto de perfil (opcional, pega un link)</label>
+        <input id="studentPhotoInput" type="url" inputmode="url" placeholder="https://…" autocomplete="off" value="${escapeHtml(draftPhotoInput)}" onblur="saveStudentPhoto(event)" style="width:100%; background:var(--bg); border:1px solid var(--line); border-radius:8px; padding:11px 12px; color:var(--text); font-family:var(--font-mono); font-size:12px;" />
       </div>
 
       <div class="field" style="margin-bottom:18px;">
@@ -2396,6 +2742,7 @@ function routineCardHtml(routine, mode){
 function renderRoutinesFolderHtml(d){
   const routines = d.routines || [];
   const cards = routines.map(r => routineCardHtml(r, 'trainer')).join('');
+  const plan = d.amrapPlan;
   return `
     <div class="section-title">${escapeHtml(d.name)} (${routines.length})</div>
     ${routines.length ? cards : `<div class="empty" style="padding:20px 8px;"><p>Todavía no armaste ninguna rutina para este alumno.</p></div>`}
@@ -2421,6 +2768,29 @@ function renderRoutinesFolderHtml(d){
         </div>
       </div>
     ` : `<button class="btn btn-ghost" style="margin-top:14px;" onclick="openAddRoutineForm()">+ Nueva rutina</button>`}
+
+    <div class="section-title" style="margin-top:28px;">🅱️ Plan B (AMRAP)</div>
+    <p style="font-size:12px; color:var(--text-dim); margin:-4px 0 12px; line-height:1.4;">Para los días que ${escapeHtml(d.name)} no puede o no quiere hacer la rutina de hoy: un circuito corto a contrarreloj como alternativa, sin culpa.</p>
+    ${state.formOpen === 'editAmrapPlan' ? renderAmrapPlanFormHtml() : (plan && plan.exercises && plan.exercises.length ? `
+      <div class="ex-row">
+        <div class="ex-head">
+          <div style="display:flex; gap:12px;">
+            <div class="ex-photo-placeholder">🅱️</div>
+            <div>
+              <h4>${plan.minutes} min AMRAP</h4>
+              <div class="meta">${plan.exercises.map(x=>escapeHtml(x)).join(' → ')}</div>
+            </div>
+          </div>
+          <div style="display:flex; gap:2px;">
+            <button class="icon-btn" onclick="openAmrapPlanForm()">✎</button>
+            <button class="icon-btn danger" onclick="deleteAmrapPlan()">✕</button>
+          </div>
+        </div>
+      </div>
+    ` : `
+      <div class="empty" style="padding:16px 8px;"><p>Todavía no configuraste el Plan B.</p></div>
+      <button class="btn btn-ghost" style="width:100%;" onclick="openAmrapPlanForm()">+ Configurar Plan B</button>
+    `)}
   `;
 }
 function renderTrainerEditRoutine(){
@@ -3037,15 +3407,14 @@ function renderStudentPortal(){
     app.innerHTML = `${topbar(true, 'Cambiar de alumno', 'goPickStudent()')}<div class="content"><p class="chart-empty">Cargando…</p></div>`;
     return;
   }
-  const c = plateColorFor(state.studentsIndex.find(s=>s.id===state.currentId)?.colorIndex ?? 0);
-  const initial = (d.name||'?').charAt(0).toUpperCase();
+  const indexEntry = state.studentsIndex.find(s=>s.id===state.currentId);
   const tab = state.studentTab === 'progreso' ? 'progreso' : 'rutina';
 
   app.innerHTML = `
     ${topbar(true, 'Cambiar de alumno', 'goPickStudent()')}
     <div class="content with-bottom-nav">
       <div style="display:flex; align-items:center; gap:12px; margin-bottom:6px;">
-        <div class="plate ${c.text==='light'?'plate-text-light':'plate-text-dark'}" style="width:48px;height:48px;font-size:18px;background:${c.bg};border-color:${c.border};border-width:3px;">${initial}</div>
+        ${avatarHtml({...indexEntry, name: d.name}, 48, 18)}
         <div>
           <h2 style="font-size:20px;">${escapeHtml(d.name)}</h2>
           <div class="mono" style="font-size:12px; color:var(--text-dim);">${formatDate(todayISO())}</div>
@@ -3184,7 +3553,19 @@ function renderStudentRoutineTab(d){
   const activeRoutineForNotes = getActiveRoutine();
   const warmupNotes = activeRoutineForNotes ? (activeRoutineForNotes.warmupNotes || '') : '';
   return `
+    <div class="field" style="margin-bottom:14px;">
+      <label>🔊 Sonido de alertas</label>
+      <div class="row-gap">
+        <select id="soundPrefSelect" onchange="setSoundPref(this.value)" style="flex:1; background:var(--bg); border:1px solid var(--line); border-radius:8px; padding:10px 12px; color:var(--text); font-family:var(--font-body); font-size:14px;">
+          ${Object.keys(SOUND_PRESET_LABELS).map(k => `<option value="${k}" ${((d.soundPref||'bell')===k)?'selected':''}>${SOUND_PRESET_LABELS[k]}</option>`).join('')}
+        </select>
+        <button type="button" class="btn btn-secondary btn-sm" onclick="playAlertSound(2, 700)">▶ Probar</button>
+      </div>
+    </div>
     ${!clockActive ? `<button class="btn btn-secondary" style="margin-bottom:14px;" onclick="startWorkoutClock('${escapeHtml(routineLabel).replace(/'/g,"\\'")}')">▶ Comenzar rutina</button>` : `<div class="mono" style="font-size:11px; color:var(--accent); margin-bottom:14px;">● Cronómetro corriendo — mirá arriba de la pantalla</div>`}
+    ${(state.currentData.amrapPlan && state.currentData.amrapPlan.exercises && state.currentData.amrapPlan.exercises.length) ? `
+      <button class="btn btn-ghost" style="margin-bottom:20px; width:100%;" onclick="startAmrapSession()">🅱️ Hoy prefiero el Plan B (${state.currentData.amrapPlan.minutes} min AMRAP)</button>
+    ` : ''}
     ${(warmupList.length || warmupNotes) ? `
       <div class="section-title">🔥 Entrada en calor</div>
       ${warmupNotes ? `<div style="background:var(--surface); border:1px solid var(--line); border-radius:10px; padding:12px 14px; margin-bottom:14px; font-size:13px; line-height:1.5; white-space:pre-wrap;">${escapeHtml(warmupNotes)}</div>` : ''}

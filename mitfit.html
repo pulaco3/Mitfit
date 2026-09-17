@@ -3393,10 +3393,14 @@ function backToStudentRoutines(){
 }
 function renderStudentRoutineTabWrapper(d){
   const activeRoutine = getActiveRoutine();
+  const amrapButtonHtml = (state.amrapPlan && state.amrapPlan.exercises && state.amrapPlan.exercises.length) ? `
+    <button class="btn btn-ghost" style="margin-bottom:18px; width:100%;" onclick="startAmrapSession()">🅱️ Hoy prefiero el Plan B (${state.amrapPlan.minutes} min AMRAP)</button>
+  ` : '';
   if(!activeRoutine){
     const routines = d.routines || [];
     const cards = routines.map(r => routineCardHtml(r, 'student')).join('');
     return `
+      ${amrapButtonHtml}
       <div class="section-title">${escapeHtml(d.name)} (${routines.length})</div>
       ${routines.length ? cards : `<div class="empty" style="padding:20px 8px;"><p>Tu entrenador todavía no armó ninguna rutina para vos.</p></div>`}
     `;

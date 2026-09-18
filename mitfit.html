@@ -1995,7 +1995,7 @@ function advanceTabataPhase(){
   }
   updateTabataUI();
 }
-function finishTabata(){
+async function finishTabata(){
   tabataState.phase = 'done';
   tabataState.running = false;
   clearInterval(tabataInterval);
@@ -2007,6 +2007,14 @@ function finishTabata(){
       new Notification('MITFIT · Tabata terminado', { body: '¡' + tabataState.label + ' completado!', tag:'mitfit-tabata' });
     }
   }catch(e){}
+  if(state.currentData){
+    state.currentData.trainerNotes = state.currentData.trainerNotes || [];
+    state.currentData.trainerNotes.unshift({
+      id: uid(), date: todayISO(), routineName: tabataState.label,
+      text: 'Completó el bloque Tabata "' + tabataState.label + '": ' + tabataState.rounds + ' rondas de ' + tabataState.work + 's trabajo / ' + tabataState.rest + 's descanso, en ' + (formatDuration(tabataState.totalSeconds) || '0:00') + ' totales.'
+    });
+    await saveStudent(state.currentId, state.currentData);
+  }
   setTimeout(closeTabata, 3500);
 }
 function tabataBeep(kind){

@@ -1909,7 +1909,7 @@ mountTimerBar();
 
 /* ---------- Tabata timer ---------- */
 let tabataInterval = null;
-let tabataState = { active:false, blockId:null, circuit:[], work:20, rest:10, rounds:8, prep:10, phase:'prep', round:1, endTime:0, running:false, label:'', lastCountdownAt:null };
+let tabataState = { active:false, blockId:null, circuit:[], work:20, rest:10, rounds:8, prep:10, phase:'prep', round:1, endTime:0, running:false, label:'', lastCountdownAt:null, totalSeconds:0, sessionStartAt:0, pausedAccum:0, pauseStartedAt:null };
 
 function mountTabataOverlay(){
   if(document.getElementById('tabataOverlay')) return;
@@ -1923,6 +1923,7 @@ function mountTabataOverlay(){
     <div id="tabataTime" class="tabata-time prep">00:00</div>
     <div id="tabataExName" class="tabata-exname">—</div>
     <div id="tabataRound" class="tabata-round">Ronda 1</div>
+    <div id="tabataTotalTime" class="mono" style="font-size:12px; color:var(--text-dim); margin-bottom:20px;">Total: 00:00 / 00:00</div>
     <div class="tabata-controls">
       <button id="tabataPauseBtn" onclick="toggleTabataPause()">⏸ Pausar</button>
       <button onclick="skipTabataPhase()">⏭ Saltar</button>
@@ -1950,7 +1951,8 @@ function startTabataSession(exId){
     active:true, blockId: ex.id, circuit,
     work: ex.tabataWork || 20, rest: ex.tabataRest || 10, rounds: ex.tabataRounds || 8, prep,
     phase:'prep', round:1, running:true, label: ex.name || 'Tabata',
-    endTime: Date.now() + prep*1000, lastCountdownAt:null
+    endTime: Date.now() + prep*1000, lastCountdownAt:null,
+    totalSeconds: calcTabataTotalSeconds(ex), sessionStartAt: Date.now(), pausedAccum:0, pauseStartedAt:null
   };
   const overlay = document.getElementById('tabataOverlay');
   if(overlay) overlay.classList.add('show');
@@ -2063,6 +2065,12 @@ function updateTabataUI(remainingOverride){
   if(roundEl) roundEl.textContent = tabataState.phase === 'done' ? '¡Bloque completo!' : ('Ronda ' + tabataState.round + ' / ' + tabataState.rounds);
   const pauseBtn = document.getElementById('tabataPauseBtn');
   if(pauseBtn) pauseBtn.textContent = tabataState.running ? '⏸ Pausar' : '▶ Seguir';
+  const totalEl = document.getElementById('tabataTotalTime');
+  if(totalEl){
+    const elapsedMs = Date.now() - tabataState.sessionStartAt - tabataState.pausedAccum - (tabataState.pauseStartedAt ? (Date.now()-tabataState.pauseStartedAt) : 0);
+    const elapsed = Math.max(0, Math.round(elapsedMs/1000));
+    totalEl.textContent = 'Total: ' + (formatDuration(elapsed) || '0:00') + ' / ' + (formatDuration(tabataState.totalSeconds) || '0:00');
+  }
 }
 function toggleTabataPause(){
   if(tabataState.phase === 'done') return;
@@ -2070,8 +2078,13 @@ function toggleTabataPause(){
   if(tabataState.running){
     const remaining = Math.max(0, Math.round((tabataState.endTime - Date.now())/1000)) || 1;
     tabataState.endTime = Date.now() + remaining*1000;
+    if(tabataState.pauseStartedAt){
+      tabataState.pausedAccum += Date.now() - tabataState.pauseStartedAt;
+      tabataState.pauseStartedAt = null;
+    }
     tabataInterval = setInterval(tickTabata, 250);
   } else {
+    tabataState.pauseStartedAt = Date.now();
     clearInterval(tabataInterval);
   }
   updateTabataUI();
@@ -2086,7 +2099,7 @@ function confirmCloseTabata(){
 }
 function closeTabata(){
   clearInterval(tabataInterval);
-  tabataState = { active:false, blockId:null, circuit:[], work:20, rest:10, rounds:8, prep:10, phase:'prep', round:1, endTime:0, running:false, label:'', lastCountdownAt:null };
+  tabataState = { active:false, blockId:null, circuit:[], work:20, rest:10, rounds:8, prep:10, phase:'prep', round:1, endTime:0, running:false, label:'', lastCountdownAt:null, totalSeconds:0, sessionStartAt:0, pausedAccum:0, pauseStartedAt:null };
   const overlay = document.getElementById('tabataOverlay');
   if(overlay) overlay.classList.remove('show');
 }
@@ -3085,6 +3098,13 @@ function trainerExRowHtml(ex, d){
   `;
 }
 
+function calcTabataTotalSeconds(ex){
+  const work = ex.tabataWork || 20;
+  const rest = ex.tabataRest || 10;
+  const rounds = ex.tabataRounds || 8;
+  const prep = ex.tabataPrep || 10;
+  return prep + work*rounds + rest*Math.max(0, rounds-1);
+}
 function trainerTabataRowHtml(ex){
   const circuitLabel = (ex.tabataCircuit && ex.tabataCircuit.length) ? ex.tabataCircuit.join(' → ') : ex.name;
   return `
@@ -3094,7 +3114,7 @@ function trainerTabataRowHtml(ex){
           <div class="ex-photo-placeholder">⏱️</div>
           <div>
             <h4>${escapeHtml(ex.name)}</h4>
-            <div class="meta">TABATA · ${ex.tabataRounds||8} rondas · ${ex.tabataWork||20}s trabajo / ${ex.tabataRest||10}s descanso</div>
+            <div class="meta">TABATA · ${ex.tabataRounds||8} rondas · ${ex.tabataWork||20}s trabajo / ${ex.tabataRest||10}s descanso · Total: ${formatDuration(calcTabataTotalSeconds(ex))}</div>
             <div class="meta" style="margin-top:2px;">${escapeHtml(circuitLabel)}</div>
           </div>
         </div>
@@ -3395,7 +3415,7 @@ function backToStudentRoutines(){
 function renderStudentRoutineTabWrapper(d){
   const activeRoutine = getActiveRoutine();
   const amrapButtonHtml = (state.amrapPlan && state.amrapPlan.exercises && state.amrapPlan.exercises.length) ? `
-    <button class="btn btn-ghost" style="margin-bottom:18px; width:100%;" onclick="startAmrapSession()">🅱️ Hoy prefiero el Plan B (${state.amrapPlan.minutes} min AMRAP)</button>
+    <button class="btn" style="margin-bottom:18px; width:100%; background:rgba(244,167,0,0.14); border:1.5px solid var(--yellow); color:var(--yellow); font-weight:700;" onclick="startAmrapSession()">🅱️ Hoy prefiero el Plan B (${state.amrapPlan.minutes} min AMRAP)</button>
   ` : '';
   if(!activeRoutine){
     const routines = d.routines || [];
@@ -3524,7 +3544,7 @@ function studentTabataRowHtml(ex){
           <div class="ex-photo-placeholder">⏱️</div>
           <div>
             <h4>${escapeHtml(ex.name)}</h4>
-            <div class="meta">TABATA · ${ex.tabataRounds||8} rondas · ${ex.tabataWork||20}s / ${ex.tabataRest||10}s</div>
+            <div class="meta">TABATA · ${ex.tabataRounds||8} rondas · ${ex.tabataWork||20}s / ${ex.tabataRest||10}s · Total: ${formatDuration(calcTabataTotalSeconds(ex))}</div>
             <div class="meta" style="margin-top:2px;">${escapeHtml(circuitLabel)}</div>
           </div>
         </div>
@@ -3577,7 +3597,7 @@ function renderStudentRoutineTab(d){
     </div>
     ${!clockActive ? `<button class="btn btn-secondary" style="margin-bottom:14px;" onclick="startWorkoutClock('${escapeHtml(routineLabel).replace(/'/g,"\\'")}')">▶ Comenzar rutina</button>` : `<div class="mono" style="font-size:11px; color:var(--accent); margin-bottom:14px;">● Cronómetro corriendo — mirá arriba de la pantalla</div>`}
     ${(state.amrapPlan && state.amrapPlan.exercises && state.amrapPlan.exercises.length) ? `
-      <button class="btn btn-ghost" style="margin-bottom:20px; width:100%;" onclick="startAmrapSession()">🅱️ Hoy prefiero el Plan B (${state.amrapPlan.minutes} min AMRAP)</button>
+      <button class="btn" style="margin-bottom:20px; width:100%; background:rgba(244,167,0,0.14); border:1.5px solid var(--yellow); color:var(--yellow); font-weight:700;" onclick="startAmrapSession()">🅱️ Hoy prefiero el Plan B (${state.amrapPlan.minutes} min AMRAP)</button>
     ` : ''}
     ${(warmupList.length || warmupNotes) ? `
       <div class="section-title">🔥 Entrada en calor</div>

@@ -374,6 +374,20 @@
     background:var(--surface-2); border:1px solid var(--line); color:var(--text); border-radius:10px;
     padding:13px 20px; font-family:var(--font-mono); font-size:13px; cursor:pointer;
   }
+  .tabata-heart-wave{ width:100%; max-width:300px; height:46px; margin:0 auto 16px; overflow:hidden; opacity:0.9; }
+  .tabata-heart-wave svg{ width:200%; height:100%; display:block; animation-name:tabataHeartScroll; animation-timing-function:linear; animation-iteration-count:infinite; animation-duration:1.4s; }
+  .tabata-heart-wave .wave-path{ fill:none; stroke-width:3; stroke-linecap:round; stroke-linejoin:round; stroke:var(--text-dim); }
+  .tabata-heart-wave .wave-g{ transform-box:fill-box; transform-origin:center; transition:transform 0.4s ease; transform:scaleY(0.1); }
+  .tabata-heart-wave.work .wave-g{ transform:scaleY(1); }
+  .tabata-heart-wave.work svg{ animation-duration:0.65s; }
+  .tabata-heart-wave.work .wave-path{ stroke:var(--accent); }
+  .tabata-heart-wave.rest .wave-g{ transform:scaleY(0.1); }
+  .tabata-heart-wave.rest svg{ animation-duration:1.6s; }
+  .tabata-heart-wave.rest .wave-path{ stroke:var(--yellow); }
+  .tabata-heart-wave.prep .wave-g{ transform:scaleY(0.1); }
+  .tabata-heart-wave.done .wave-g{ transform:scaleY(0.05); }
+  .tabata-heart-wave.done .wave-path{ stroke:var(--green); }
+  @keyframes tabataHeartScroll{ from{ transform:translateX(0); } to{ transform:translateX(-12.5%); } }
 </style>
 </head>
 <body>
@@ -1913,6 +1927,11 @@ let tabataState = { active:false, blockId:null, circuit:[], work:20, rest:10, ro
 
 function mountTabataOverlay(){
   if(document.getElementById('tabataOverlay')) return;
+  let waveD = 'M0,30';
+  for(let k=0; k<8; k++){
+    const o = k*100;
+    waveD += ` L${o+40},30 L${o+45},8 L${o+50},52 L${o+55},22 L${o+60},30 L${o+100},30`;
+  }
   const overlay = document.createElement('div');
   overlay.id = 'tabataOverlay';
   overlay.className = 'tabata-overlay';
@@ -1921,6 +1940,11 @@ function mountTabataOverlay(){
     <button class="tabata-close" onclick="confirmCloseTabata()">✕</button>
     <div id="tabataPhase" class="tabata-phase prep">Preparate</div>
     <div id="tabataTime" class="tabata-time prep">00:00</div>
+    <div id="tabataHeartWave" class="tabata-heart-wave prep">
+      <svg viewBox="0 0 800 60" preserveAspectRatio="none">
+        <g class="wave-g"><path class="wave-path" d="${waveD}" /></g>
+      </svg>
+    </div>
     <div id="tabataExName" class="tabata-exname">—</div>
     <div id="tabataRound" class="tabata-round">Ronda 1</div>
     <div id="tabataTotalTime" class="mono" style="font-size:12px; color:var(--text-dim); margin-bottom:20px;">Total: 00:00 / 00:00</div>
@@ -2057,6 +2081,8 @@ function updateTabataUI(remainingOverride){
       : tabataState.phase === 'rest' ? 'Descanso'
       : '¡Listo!';
   }
+  const waveEl = document.getElementById('tabataHeartWave');
+  if(waveEl) waveEl.className = 'tabata-heart-wave ' + tabataState.phase;
   const exEl = document.getElementById('tabataExName');
   if(exEl){
     if(tabataState.phase === 'done'){

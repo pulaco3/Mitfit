@@ -3507,17 +3507,31 @@ function renderStudentPortal(){
   `;
 }
 
+function lastLoggedSetFor(exId){
+  const logs = (state.currentData && state.currentData.logs) || [];
+  const sorted = [...logs].sort((a,b) => b.date.localeCompare(a.date));
+  for(const log of sorted){
+    const entry = (log.entries||[]).find(e => e.exerciseId === exId);
+    if(entry && entry.sets && entry.sets.length){
+      return entry.sets[entry.sets.length-1];
+    }
+  }
+  return null;
+}
 function studentExRowHtml(ex){
   const draft = getTodaysDraft();
   const setsDone = draft[ex.id] || [];
   const doneCount = setsDone.filter(Boolean).length;
   const exerciseComplete = doneCount >= ex.sets && ex.sets > 0;
   const isTime = ex.type === 'time';
+  const lastSet = lastLoggedSetFor(ex.id);
     const slots = Array.from({length: ex.sets}).map((_, i) => {
       const s = setsDone[i];
       const key = 'logSet:' + ex.id + ':' + i;
       if(state.formOpen === key){
-        const msplit = splitMinSec(ex.reps);
+        const prefillReps = s ? s.reps : (lastSet ? lastSet.reps : ex.reps);
+        const prefillWeight = s ? s.weight : (lastSet ? lastSet.weight : ex.weight);
+        const msplit = splitMinSec(prefillReps);
         return `
           <form class="inline-form" style="margin:10px 0; width:100%;">
             <div class="field-row">
@@ -3530,9 +3544,9 @@ function studentExRowHtml(ex){
                   </div>
                 </div>
               ` : `
-                <div class="field"><label>Reps</label><input id="slotReps" type="number" min="1" value="${ex.reps}" /></div>
+                <div class="field"><label>Reps</label><input id="slotReps" type="number" min="1" value="${prefillReps}" /></div>
               `}
-              <div class="field"><label>${isTime ? 'Nivel (opcional)' : 'Kg'}</label><input id="slotWeight" type="number" min="0" step="0.5" value="${ex.weight}" /></div>
+              <div class="field"><label>${isTime ? 'Nivel (opcional)' : 'Kg'}</label><input id="slotWeight" type="number" min="0" step="0.5" value="${prefillWeight}" /></div>
             </div>
             <div class="row-gap">
               <button type="button" class="btn btn-primary btn-sm" onclick="submitLogSlot(event,'${ex.id}',${i})">${isTime ? 'Cargar bloque' : 'Cargar serie'}</button>
@@ -3558,7 +3572,7 @@ function studentExRowHtml(ex){
           ${ex.photo ? `<img class="ex-photo" src="${ex.photo}" />` : `<div class="ex-photo-placeholder">🏋️</div>`}
           <div>
             <h4>${escapeHtml(ex.name)}${exerciseComplete ? '<span class="ex-complete-badge">✓</span>' : ''}</h4>
-            <div class="meta">${ex.type==='time' ? `objetivo: ${ex.sets} × ${formatMinDuration(ex.reps)}${ex.weight?' · nivel '+ex.weight:''}` : `objetivo: ${ex.sets} × ${ex.reps} reps · ${ex.weight} kg`}</div>
+            <div class="meta">${ex.type==='time' ? `objetivo: ${ex.sets} × ${formatMinDuration(ex.reps)}${ex.weight?' · nivel '+ex.weight:''}` : `objetivo: ${ex.sets} × ${ex.reps} reps · ${ex.weight} kg`}${lastSet ? ` · <span style="color:var(--accent);">último: ${isTime ? formatMinDuration(lastSet.reps) : lastSet.reps+'×'+lastSet.weight+'kg'}</span>` : ''}</div>
             <a href="${ex.video ? escapeHtml(ex.video) : youtubeSearchUrl(ex.name)}" target="_blank" rel="noopener" class="mono" style="display:inline-block; margin-top:4px; font-size:11px; color:var(--accent); text-decoration:none;">${ex.video ? '▶ Ver video' : '🔍 Buscar video'}</a>
           </div>
         </div>

@@ -867,6 +867,7 @@ let state = {
   studentTab: 'rutina',
   formOpen: null,
   loading: true,
+  reportRoutineId: null,
 };
 let tempPhoto = { changed:false, data:'' }; // (sin uso, se deja por compatibilidad)
 
@@ -2484,6 +2485,7 @@ function render(){
   if(state.view === 'trainerDashboard') return renderTrainerDashboard();
   if(state.view === 'trainerEditStudent') return renderTrainerEditStudent();
   if(state.view === 'trainerEditRoutine') return renderTrainerEditRoutine();
+  if(state.view === 'cycleReport') return renderCycleReportView();
   if(state.view === 'studentPortal') return renderStudentPortal();
 }
 
@@ -2796,6 +2798,179 @@ function googleCalendarLink(title, dateObj, details){
     + '&dates=' + fmt(dateObj) + '/' + fmt(end)
     + '&details=' + encodeURIComponent(details || '');
   return url;
+}
+
+/* ---------- Cycle report (informe de fin de rutina) ---------- */
+function endedCycleRoutines(d){
+  return (d.routines || []).filter(r => {
+    const info = cycleInfo(r);
+    return info && info.ended;
+  });
+}
+function generateCycleReport(d, routine){
+  const start = routine.startDate;
+  const today = todayISO();
+  const logsInCycle = [...(d.logs || [])]
+    .filter(l => l.routineId === routine.id && l.date >= start && l.date <= today)
+    .sort((a,b) => a.date.localeCompare(b.date));
+  const totalSessions = logsInCycle.length;
+  const totalVolume = logsInCycle.reduce((sum, l) => sum + computeSessionVolume(l, d), 0);
+  const totalSeconds = logsInCycle.reduce((sum, l) => sum + (l.durationSeconds || 0), 0);
+
+  const exercises = (routine.exercises || []).filter(e => !e.warmup && e.type !== 'tabata');
+  const exerciseProgress = exercises.map(ex => {
+    const isTime = ex.type === 'time';
+    const tops = [];
+    logsInCycle.forEach(l => {
+      const entry = l.entries.find(e => e.exerciseId === ex.id);
+      if(entry && entry.sets && entry.sets.length){
+        const top = isTime
+          ? entry.sets.reduce((s, st) => s + (st.reps || 0), 0)
+          : Math.max(...entry.sets.map(st => st.weight || 0));
+        tops.push(top);
+      }
+    });
+    if(!tops.length) return null;
+    const first = tops[0], last = tops[tops.length - 1];
+    return { name: ex.name, first, last, delta: last - first, isTime };
+  }).filter(Boolean);
+
+  const info = cycleInfo(routine);
+  const endDateStr = info ? info.endDate.toISOString().slice(0,10) : today;
+
+  return {
+    routineName: routine.name, startDate: start, endDate: endDateStr,
+    weeks: routine.durationWeeks, totalSessions, totalVolume, totalSeconds, exerciseProgress
+  };
+}
+function buildCycleReportText(studentName, report){
+  const lines = [];
+  lines.push('📊 INFORME DE PROGRESO — MITFIT');
+  lines.push(studentName + ' · ' + report.routineName);
+  lines.push('Ciclo: ' + formatDate(report.startDate) + ' → ' + formatDate(report.endDate) + (report.weeks ? ' (' + report.weeks + ' semanas)' : ''));
+  lines.push('');
+  lines.push('✅ Sesiones completadas: ' + report.totalSessions);
+  if(report.totalSeconds) lines.push('⏱ Tiempo total entrenado: ' + (formatDuration(report.totalSeconds) || '0:00'));
+  if(report.totalVolume) lines.push('🏋️ Volumen total levantado: ' + report.totalVolume.toLocaleString('es-AR') + ' kg');
+  if(report.exerciseProgress.length){
+    lines.push('');
+    lines.push('Progreso por ejercicio:');
+    report.exerciseProgress.forEach(ex => {
+      const unit = ex.isTime ? 's' : 'kg';
+      const arrow = ex.delta > 0 ? '📈' : (ex.delta < 0 ? '📉' : '➖');
+      const deltaText = ex.delta === 0 ? 'sin cambios' : ((ex.delta > 0 ? '+' : '') + ex.delta + unit);
+      lines.push('• ' + ex.name + ': ' + ex.first + unit + ' → ' + ex.last + unit + ' ' + arrow + ' (' + deltaText + ')');
+    });
+  }
+  lines.push('');
+  lines.push('¡Seguimos! 💪');
+  return lines.join('\n');
+}
+function openCycleReport(routineId){
+  state.reportRoutineId = routineId;
+  state.view = 'cycleReport';
+  render();
+}
+function closeCycleReport(){
+  state.reportRoutineId = null;
+  state.view = 'trainerEditStudent';
+  state.editorTab = 'progreso';
+  render();
+}
+async function markCycleReportSent(routineId){
+  const r = state.currentData.routines.find(x => x.id === routineId);
+  if(r){
+    r.lastReportAt = todayISO();
+    await saveStudent(state.currentId, state.currentData);
+  }
+}
+async function copyCycleReport(routineId){
+  const d = state.currentData;
+  const r = d.routines.find(x => x.id === routineId);
+  if(!r) return;
+  const report = generateCycleReport(d, r);
+  const text = buildCycleReportText(d.name, report);
+  try{
+    await navigator.clipboard.writeText(text);
+    showToast('Informe copiado — pegalo en WhatsApp o donde prefieras');
+    await markCycleReportSent(routineId);
+    render();
+  }catch(e){
+    showToast('No se pudo copiar. Mantené presionado el texto para copiarlo a mano.');
+  }
+}
+async function shareCycleReport(routineId){
+  const d = state.currentData;
+  const r = d.routines.find(x => x.id === routineId);
+  if(!r) return;
+  const report = generateCycleReport(d, r);
+  const text = buildCycleReportText(d.name, report);
+  if(navigator.share){
+    try{
+      await navigator.share({ title: 'Informe de progreso — MITFIT', text });
+      await markCycleReportSent(routineId);
+      render();
+      return;
+    }catch(e){ /* el usuario canceló el share, no hacemos nada */ return; }
+  }
+  copyCycleReport(routineId);
+}
+function renderCycleReportView(){
+  const d = state.currentData;
+  const r = d && d.routines ? d.routines.find(x => x.id === state.reportRoutineId) : null;
+  if(!d || !r){
+    app.innerHTML = `${topbar(true, 'Volver', 'closeCycleReport()')}<div class="content"><p class="chart-empty">No se encontró la rutina.</p></div>`;
+    return;
+  }
+  const report = generateCycleReport(d, r);
+  const text = buildCycleReportText(d.name, report);
+  app.innerHTML = `
+    ${topbar(true, 'Progreso', 'closeCycleReport()')}
+    <div class="content">
+      <div class="section-title" style="margin-top:0;">📊 Informe de ciclo</div>
+      <div class="inline-form" style="margin-bottom:16px;">
+        <h3 style="margin:0 0 4px;">${escapeHtml(d.name)} · ${escapeHtml(report.routineName)}</h3>
+        <p class="mono" style="font-size:12px; color:var(--text-dim); margin:0 0 14px;">${formatDate(report.startDate)} → ${formatDate(report.endDate)}${report.weeks ? ' · ' + report.weeks + ' semanas' : ''}</p>
+        <div class="field-row" style="margin-bottom:14px;">
+          <div class="field"><label>Sesiones</label><div style="font-family:var(--font-display); font-size:26px; font-weight:700;">${report.totalSessions}</div></div>
+          <div class="field"><label>Tiempo total</label><div style="font-family:var(--font-display); font-size:26px; font-weight:700;">${formatDuration(report.totalSeconds) || '0:00'}</div></div>
+        </div>
+        ${report.totalVolume ? `<div class="field" style="margin-bottom:4px;"><label>Volumen total levantado</label><div style="font-family:var(--font-display); font-size:22px; font-weight:700; color:var(--accent);">${report.totalVolume.toLocaleString('es-AR')} kg</div></div>` : ''}
+      </div>
+
+      ${report.exerciseProgress.length ? `
+        <div class="section-title">Progreso por ejercicio</div>
+        <div class="stack" style="margin-bottom:20px;">
+          ${report.exerciseProgress.map(ex => {
+            const unit = ex.isTime ? 's' : 'kg';
+            const color = ex.delta > 0 ? 'var(--accent)' : (ex.delta < 0 ? 'var(--danger)' : 'var(--text-dim)');
+            const arrow = ex.delta > 0 ? '📈' : (ex.delta < 0 ? '📉' : '➖');
+            return `
+              <div class="ex-row">
+                <div class="ex-head">
+                  <div>
+                    <h4>${escapeHtml(ex.name)}</h4>
+                    <div class="meta">${ex.first}${unit} → ${ex.last}${unit}</div>
+                  </div>
+                  <div class="mono" style="color:${color}; font-weight:700; font-size:13px;">${arrow} ${ex.delta>0?'+':''}${ex.delta}${unit}</div>
+                </div>
+              </div>
+            `;
+          }).join('')}
+        </div>
+      ` : `<div class="empty" style="padding:16px 8px; margin-bottom:20px;"><p>No se registraron series de esta rutina en el período.</p></div>`}
+
+      <div class="section-title">Mensaje para el alumno</div>
+      <div class="field" style="margin-bottom:14px;">
+        <textarea readonly style="min-height:220px; font-family:var(--font-mono); font-size:12.5px;">${escapeHtml(text)}</textarea>
+      </div>
+      ${r.lastReportAt ? `<p class="mono" style="font-size:11px; color:var(--text-dim); margin:-8px 0 12px;">✓ Enviado el ${formatDate(r.lastReportAt)}</p>` : ''}
+      <div class="row-gap">
+        <button class="btn btn-primary" style="flex:1;" onclick="shareCycleReport('${r.id}')">📤 Compartir</button>
+        <button class="btn btn-secondary" style="flex:1;" onclick="copyCycleReport('${r.id}')">📋 Copiar texto</button>
+      </div>
+    </div>
+  `;
 }
 function routineCardHtml(routine, mode){
   const exercises = routine.exercises || [];
@@ -3371,6 +3546,23 @@ function volumeWaveSvg(points){
 }
 
 function renderProgressView(d, readOnly){
+  const endedRoutines = readOnly ? endedCycleRoutines(d) : [];
+  const reportBannerHtml = endedRoutines.length ? `
+    <div class="section-title" style="margin-top:0;">⏰ Ciclos terminados</div>
+    <div class="stack" style="margin-bottom:18px;">
+      ${endedRoutines.map(r => `
+        <div class="ex-row" style="border-left:3px solid var(--yellow);">
+          <div class="ex-head">
+            <div>
+              <h4>${escapeHtml(r.name)}</h4>
+              <div class="meta">${r.durationWeeks ? r.durationWeeks + ' semanas · ' : ''}terminó el ${formatDate(cycleInfo(r).endDate.toISOString().slice(0,10))}${r.lastReportAt ? ' · informe enviado el ' + formatDate(r.lastReportAt) : ''}</div>
+            </div>
+            <button class="btn btn-primary btn-sm" onclick="openCycleReport('${r.id}')">${r.lastReportAt ? 'Ver informe' : '📊 Generar informe'}</button>
+          </div>
+        </div>
+      `).join('')}
+    </div>
+  ` : '';
   const notes = d.trainerNotes || [];
   const notesHtml = (readOnly && notes.length) ? `
     <div class="section-title">💬 Mensajes del alumno</div>
@@ -3424,6 +3616,7 @@ function renderProgressView(d, readOnly){
   }).join('');
 
   return `
+    ${reportBannerHtml}
     ${notesHtml}
     ${volumeSeries.length ? `
       <div class="section-title">Volumen por sesión</div>

@@ -814,13 +814,15 @@ function withTimeout(promise, ms){
     new Promise((_, reject) => setTimeout(() => reject(new Error('timeout')), ms || 6000))
   ]);
 }
+let dbFailed = false; // true si alguna lectura falló: se bloquean los guardados para no pisar datos reales
 async function getIndex(){
   try{
     const doc = await withTimeout(db.collection('mitfit').doc('students-index').get());
     return (doc.exists && doc.data().value) ? doc.data().value : [];
-  }catch(e){ return []; }
+  }catch(e){ dbFailed = true; return []; }
 }
 async function saveIndex(list){
+  if(dbFailed){ showToast('Sin conexión con la base: no se guardó'); return false; }
   try{
     await withTimeout(db.collection('mitfit').doc('students-index').set({ value: list }));
     return true;
@@ -830,24 +832,27 @@ async function getStudent(id){
   try{
     const doc = await withTimeout(db.collection('mitfit').doc('student-'+id).get());
     return (doc.exists && doc.data().value) ? doc.data().value : null;
-  }catch(e){ return null; }
+  }catch(e){ dbFailed = true; return null; }
 }
 async function saveStudent(id, data){
+  if(dbFailed){ showToast('Sin conexión con la base: no se guardó'); return false; }
   try{
     await withTimeout(db.collection('mitfit').doc('student-'+id).set({ value: data }));
     return true;
   }catch(e){ return false; }
 }
 async function deleteStudentStorage(id){
+  if(dbFailed) return;
   try{ await db.collection('mitfit').doc('student-'+id).delete(); }catch(e){}
 }
 async function getAppSettings(){
   try{
     const doc = await withTimeout(db.collection('mitfit').doc('app-settings').get());
     return (doc.exists && doc.data().value) ? doc.data().value : {};
-  }catch(e){ return {}; }
+  }catch(e){ dbFailed = true; return {}; }
 }
 async function saveAppSettings(settings){
+  if(dbFailed){ showToast('Sin conexión con la base: no se guardó'); return false; }
   try{
     await withTimeout(db.collection('mitfit').doc('app-settings').set({ value: settings }));
     return true;
@@ -892,14 +897,18 @@ function allExercisesFlat(d){
 }
 
 /* ---------- Init ---------- */
-(async function init(){
-  state.studentsIndex = await getIndex();
+async function init(){
+  dbFailed = false;
+  state.loading = true;
+  const idx = await getIndex();
   const settings = await getAppSettings();
+  state.studentsIndex = idx;
   state.trainerPin = settings.trainerPin || '';
   state.amrapPlan = settings.amrapPlan || null;
   state.loading = false;
   render();
-})();
+}
+init();
 async function updateAppSettings(partial){
   const current = await getAppSettings();
   const merged = { ...current, ...partial };
@@ -2479,6 +2488,14 @@ function closeCelebration(){
 /* ---------- Rendering ---------- */
 function render(){
   if(state.loading){ app.innerHTML = '<div class="content"><p class="chart-empty">Cargando…</p></div>'; return; }
+  if(dbFailed){
+    app.innerHTML = `<div class="content" style="text-align:center; padding-top:60px;">
+      <h2 style="font-size:20px; margin-bottom:10px;">No se pudo conectar con la base de datos</h2>
+      <p style="color:var(--text-dim); font-size:14px; line-height:1.5; margin-bottom:20px;">Tus datos no se borraron. Revisá tu conexión a internet e intentá de nuevo. Mientras tanto la app no guarda nada, para no pisar tu información.</p>
+      <button class="btn btn-primary" onclick="init()">Reintentar</button>
+    </div>`;
+    return;
+  }
   if(state.view === 'home') return renderHome();
   if(state.view === 'trainerPinEntry') return renderTrainerPinEntry();
   if(state.view === 'pickStudent') return renderPickStudent();
@@ -2608,6 +2625,33 @@ function studentCardHtml(s, onclick){
   `;
 }
 
+/* ---------- Respaldo ---------- */
+async function downloadBackup(){
+  if(dbFailed){ showToast('Sin conexión con la base'); return; }
+  showToast('Preparando respaldo…');
+  const students = [];
+  for(const entry of state.studentsIndex){
+    const data = await getStudent(entry.id);
+    if(dbFailed){ showToast('No se pudo leer todo. Intentá de nuevo'); return; }
+    students.push({ entry, data });
+  }
+  const payload = { app:'MITFIT', fecha:new Date().toISOString(), index:state.studentsIndex, settings:{ trainerPin:state.trainerPin, amrapPlan:state.amrapPlan }, students };
+  const json = JSON.stringify(payload);
+  const name = 'mitfit-respaldo-' + new Date().toISOString().slice(0,10) + '.json';
+  const file = new File([json], name, { type:'application/json' });
+  try{
+    if(navigator.canShare && navigator.canShare({ files:[file] })){
+      await navigator.share({ files:[file], title:'Respaldo MITFIT' });
+      return;
+    }
+  }catch(e){ if(e && e.name === 'AbortError') return; }
+  const url = URL.createObjectURL(file);
+  const a = document.createElement('a'); a.href = url; a.download = name;
+  document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(()=> URL.revokeObjectURL(url), 2000);
+  showToast('Respaldo descargado');
+}
+
 function renderTrainerDashboard(){
   const list = state.studentsIndex;
   app.innerHTML = `
@@ -2624,6 +2668,10 @@ function renderTrainerDashboard(){
           ${state.trainerPin ? `<button type="button" class="btn btn-secondary btn-sm" onclick="document.getElementById('trainerPinSetInput').value=''; saveTrainerPin(event);">Quitar PIN</button>` : ''}
         </div>
       </div>
+
+      <div class="section-title" style="margin-top:0;">💾 Respaldo de datos</div>
+      <p style="font-size:12px; color:var(--text-dim); margin:-4px 0 12px; line-height:1.4;">Descarga una copia de todos tus alumnos, rutinas y registros. Guardala en tu celular o mandatela por WhatsApp.</p>
+      <button type="button" class="btn btn-secondary btn-sm" style="margin-bottom:20px;" onclick="downloadBackup()">Descargar respaldo</button>
 
       <div class="section-title" style="margin-top:0;">🅱️ Plan B (AMRAP) — para todos los alumnos</div>
       <p style="font-size:12px; color:var(--text-dim); margin:-4px 0 12px; line-height:1.4;">Un circuito corto a contrarreloj que cualquier alumno puede elegir en vez de su rutina normal, sin culpa. Se configura una sola vez y aparece para todos.</p>
